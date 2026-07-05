@@ -55,7 +55,7 @@ async def run_p2(limit: int | None = None) -> dict:
                     raw_texts.append(r.raw_text)
                     non_empty_idx.append(j)
 
-            # 1. Summaries (returns list of (summary, source) tuples)
+            # 1. Summaries (returns list of (summary, source, model, tokens) tuples)
             try:
                 summary_results = await summarize_batch(raw_texts)
             except Exception as e:
@@ -66,20 +66,21 @@ async def run_p2(limit: int | None = None) -> dict:
                         from app.services.summarize import generate_summary
                         summary_results.append(await generate_summary(t))
                     except Exception:
-                        summary_results.append(("", "fallback"))
+                        summary_results.append(("", "fallback", None, None))
                         errors += 1
 
-            # 2. Write summaries + source FIRST (so embed failure does not lose summaries)
-            # Build embed inputs only for non-empty raw_text (Q2 fix).
+            # 2. Write summaries + source + model + tokens FIRST
             embed_inputs = []
-            embed_idx = []  # indices into batch that need embedding
+            embed_idx = []
             for j, r in enumerate(batch):
-                summ, src = summary_results[j]
+                summ, src, model_id, tokens = summary_results[j]
                 if summ and summ.strip():
                     r.summary = summ
                     r.summary_source = src
+                    if src == "llm":
+                        r.summary_model = model_id
+                        r.summary_tokens = tokens
                 if not r.raw_text or not r.raw_text.strip():
-                    # Q2 fix: empty raw_text -> embedding stays NULL (no placeholder vector)
                     continue
                 embed_text = summ if (summ and summ.strip()) else r.raw_text[:500]
                 embed_inputs.append(embed_text)

@@ -99,7 +99,8 @@ def _get_client() -> AsyncOpenAI:
 async def _call_deepseek(
     client: AsyncOpenAI, system: str, user: str, temperature: float = SUMMARY_TEMP,
     max_tokens: int = 400,
-) -> str:
+) -> tuple[str, str, int]:
+    """Call DeepSeek; return (text, model_version, total_tokens)."""
     resp = await client.chat.completions.create(
         model=settings.deepseek_model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -107,64 +108,76 @@ async def _call_deepseek(
         max_tokens=max_tokens,
         timeout=60.0,
     )
-    return (resp.choices[0].message.content or "").strip()
+    text = (resp.choices[0].message.content or "").strip()
+    model_id = resp.model or settings.deepseek_model
+    usage = resp.usage
+    tokens = (usage.total_tokens if usage else 0) or 0
+    return text, model_id, tokens
 
 
-async def generate_summary(raw_text: str | None) -> tuple[str, str]:
+async def generate_summary(raw_text: str | None) -> tuple[str, str, str | None, int | None]:
     """Generate an adaptive, plagiarism-checked summary.
 
-    Returns (summary_text, source) where source is 'llm' or 'fallback'.
-    - None/empty raw_text -> ("", "fallback")
+    Returns (summary_text, source, model_version, tokens). For fallback
+    rows, model_version=None and tokens=None.
+
+    - None/empty/<50-char raw_text -> ("", "fallback", None, None)  # Q5: skip ultra-short
     - First LLM attempt fails plagiarism -> 1 retry with stricter prompt
     - Retry still plagiarized or LLM call errors -> local boilerplate strip fallback
     """
     if not raw_text or not raw_text.strip():
-        return "", "fallback"
+        return "", "fallback", None, None
+
+    # Q5 fix: ultra-short raw_text (<50 chars, basically a headline) has no
+    # content to summarize. Skip LLM, go straight to boilerplate strip.
+    ULTRA_SHORT = 50
+    if len(raw_text.strip()) < ULTRA_SHORT:
+        return _strip_boilerplate(raw_text), "fallback", None, None
 
     if not settings.deepseek_api_key:
-        return _strip_boilerplate(raw_text) if len(raw_text) < _SHORT_THRESHOLD else raw_text[:150], "fallback"
+        return _strip_boilerplate(raw_text) if len(raw_text) < _SHORT_THRESHOLD else raw_text[:150], "fallback", None, None
 
     client = _get_client()
     user_prompt, meta = _build_prompt(raw_text)
 
     try:
-        summary = await _call_deepseek(client, _SYS, user_prompt, temperature=SUMMARY_TEMP)
+        summary, model_id, tokens = await _call_deepseek(client, _SYS, user_prompt, temperature=SUMMARY_TEMP)
     except Exception as e:
         print(f"[summary] deepseek failed: {e}; fallback to local strip")
-        return _strip_boilerplate(raw_text) if meta["mode"] == "short" else raw_text[:150], "fallback"
+        return _strip_boilerplate(raw_text) if meta["mode"] == "short" else raw_text[:150], "fallback", None, None
 
-    if _detect_plagiarism(summary, raw_text, n=15):
+    if _detect_plagiarism(summary, raw_text, n=20):  # Q4 fix: 15 -> 20
         retry_sys = (
             _SYS
-            + "\n\n注意：你上一次的输出包含与原文连续 >=15 字的相同片段，"
-            "这违反规则。请重新组织语言，确保不与原文任何 15 字连续片段相同。"
+            + "\n\n注意：你上一次的输出包含与原文连续 >=20 字的相同片段，"
+            "这违反规则。请重新组织语言，确保不与原文任何 20 字连续片段相同。"
         )
         try:
-            summary = await _call_deepseek(client, retry_sys, user_prompt, temperature=SUMMARY_TEMP)
+            summary, model_id, tokens = await _call_deepseek(client, retry_sys, user_prompt, temperature=SUMMARY_TEMP)
         except Exception as e:
             print(f"[summary] deepseek retry failed: {e}")
 
-        if _detect_plagiarism(summary, raw_text, n=15):
+        if _detect_plagiarism(summary, raw_text, n=20):
             print(f"[summary] plagiarism persists after retry (mode={meta['mode']}, n={meta['n']}); fallback")
-            return _strip_boilerplate(raw_text) if meta["mode"] == "short" else raw_text[:150], "fallback"
+            return _strip_boilerplate(raw_text) if meta["mode"] == "short" else raw_text[:150], "fallback", None, None
 
-    return summary, "llm"
+    return summary, "llm", model_id, tokens
 
 
-async def summarize_batch(raw_texts: list[str | None]) -> list[tuple[str, str]]:
-    """Summarize a batch concurrently. Returns list of (summary, source) tuples."""
+async def summarize_batch(raw_texts: list[str | None]) -> list[tuple[str, str, str | None, int | None]]:
+    """Summarize a batch concurrently. Returns list of (summary, source, model, tokens)."""
     sem = asyncio.Semaphore(8)
 
-    async def _one(t: str | None) -> tuple[str, str]:
+    async def _one(t: str | None) -> tuple[str, str, str | None, int | None]:
         async with sem:
             return await generate_summary(t)
 
     return await asyncio.gather(*[_one(t) for t in raw_texts], return_exceptions=False)
 
 
-async def rag_call(system: str, user: str, max_tokens: int = 800) -> str:
-    """RAG answer generation call. Lower temperature (0.1) for faithfulness to
-    context. Used by P5. Distinct from summarize in temperature and max_tokens."""
+async def rag_call(system: str, user: str, max_tokens: int = 800) -> tuple[str, str, int]:
+    """RAG answer generation call. temperature=0.1 faithful to context.
+    Returns (text, model_version, total_tokens)."""
     client = _get_client()
     return await _call_deepseek(
         client, system, user, temperature=RAG_TEMP, max_tokens=max_tokens
