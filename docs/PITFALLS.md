@@ -125,6 +125,39 @@ conn = psycopg.connect(plain, autocommit=True)
 
 ---
 
+## 坑 13 / transformers 4.57 要求 torch ≥ 2.6（CVE-2025-32434）
+
+**现象**：装 sentence-transformers 后跑 BGE 加载报 `Due to a serious vulnerability issue in torch.load, even with weights_only=True, we now require users to upgrade torch to at least v2.6`。
+**原因**：transformers 4.57 强制要求 torch >= 2.6 修 CVE，2.5.1+cpu 不被接受。
+**解法**：
+```bash
+# wget 断点续传大 wheel（pip 不支持续传，wget -c 能）
+wget -c --timeout=120 --tries=20 "https://download.pytorch.org/whl/cpu/torch-2.6.0%2Bcpu-cp310-cp310-linux_x86_64.whl"
+.venv/bin/pip install torch-2.6.0+cpu-cp310-cp310-linux_x86_64.whl --no-deps
+```
+**注意**：wheel 文件名必须按规范 `包名-版本-标签.whl`，瞎命名会让 pip 拒识别。
+
+---
+
+## 坑 14 / HuggingFace 直连 SSL 证书失败
+
+**现象**：sentence-transformers 加载 BAAI/bge-small-zh 时报 `SSL: CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`。
+**原因**：huggingface.co 在国内 SSL 证书验证常失败（vpn 不通到 HF / 自签证书）。
+**解法**：用 hf-mirror.com 镜像，在代码里设环境变量：
+```python
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+```
+镜像站权重正常可达，下载速度 2-3 MB/s，~30 秒下完 100MB 模型。
+
+---
+
+## 坑 15 / 旧 ORM 死锁 summary：embed 失败时 summary 也丢
+
+**现象**：第一版 P2 在 try/except 里 `continue`，导致 LLM 摘要生成后 embedding 失败时，summary 写库也跳过——下次重跑要重新花钱调 LLM。
+**解法**：拆两阶段事务——写 summary 先 commit（保住已花 token 的 LLM 调用），再 try embedding。embed 失败时 summary 不回退，下次只需补 embedding。
+
+---
+
 ## 经验提炼（论文"工程难点"一节素材）
 
 1. **首次部署 pgvector 步骤被低估**——apt 不可直装、SSL 证书坑、编译需 postgresql-server-dev-all 头文件、CREATE EXTENSION 权限隔离，完整跑通 4 个独立子坑。
@@ -132,3 +165,6 @@ conn = psycopg.connect(plain, autocommit=True)
 3. **Python LLM 栈的 torch + sentence-transformers 体积**——CUDA bundle 2GB+ 不适合 CPU 推理 demo，CPU-only wheel 需特殊 index 装，requirements.txt pin 写法要小心。
 4. **SQLAlchemy dialect 前缀与 psycopg3 原生 dsn 不兼容**——同一个连接串在 dialect 层和 driver 层格式要求不同，开发期容易踩。
 5. **ORM 设计与下游模块对齐的反查**——表建好后必须倒推 P5 检索会用到什么列、P4 抽取需要什么字段约束，否则 schema 漏洞导致下游崩。dev 期 reset 策略优于 alembic 迁移（schema 变动 <10 次时）。
+6. **CVE 驱动的版本强约束**——transformers 4.57 因 CVE-2025-32434 强迫 torch 升 2.6+，时间差依赖升级需要 wget 续传大 wheel 走断点下载。
+7. **HuggingFace 国内可达性**——直连常 SSL 失败，hf-mirror.com 是 sentence-transformers/transformers 生态最可靠的镜像端点，代码层 setdefault 不依赖 .env 配置。
+8. **P2 双阶段事务防 token 损失**——LLM 调用花钱但 embed 失败时 return-summary-as-null 等于双损，事务拆分让 LLM 已花的钱不白丢。
