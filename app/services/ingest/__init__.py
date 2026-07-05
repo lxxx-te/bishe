@@ -1,6 +1,7 @@
 """Orchestrator: load feeds config, pull RSS + NewsAPI, persist."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import yaml
@@ -31,15 +32,16 @@ async def run_ingest() -> dict:
     na_cfg = load_newsapi_config()
 
     items: list[FeedItem] = []
-    items.extend(fetch_rss(feeds))
+    items.extend(await fetch_rss(feeds))
     if na_cfg.get("enabled", True):
-        items.extend(
-            fetch_newsapi(
-                settings.newsapi_api_key,
-                country=na_cfg.get("country", "us"),
-                page_size=na_cfg.get("page_size", 50),
-            )
+        # NewsAPI call is sync; wrap so it does not stall loop only if it stalls
+        result = await asyncio.to_thread(
+            fetch_newsapi,
+            settings.newsapi_api_key,
+            na_cfg.get("country", "us"),
+            na_cfg.get("page_size", 50),
         )
+        items.extend(result)
 
     async with AsyncSessionLocal() as session:
         stats = await persist_items(session, items)
