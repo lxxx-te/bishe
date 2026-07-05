@@ -10,6 +10,14 @@ Constrained prompt enforces:
 
 N-gram check rejects summaries containing 15-char runs from source;
 rejected summaries are regenerated once, then fallback to truncated original.
+
+Temperature split (Q3 decision):
+- summarize: temp=0.3 (slight freedom to rephrase, avoid plagiarism)
+- rag_call:  temp=0.1 (faithful to context, minimize hallucination)
+
+Source provenance (Q1 fix): each summary records whether it came from
+'llm' (real DeepSeek call) or 'fallback' (local boilerplate strip when
+no API key). P2 only re-processes rows where summary_source != 'llm'.
 """
 from __future__ import annotations
 
@@ -20,6 +28,10 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from app.core.config import settings
+
+# ---- temperatures per task ----
+SUMMARY_TEMP = 0.3   # extract facts, mild rephrase freedom
+RAG_TEMP = 0.1       # faithful to context, minimize hallucination
 
 # Constrained summary prompt - shared backbone
 _SYS = (
@@ -37,9 +49,8 @@ _SHORT_USER_TMPL = (
     "原文（{n}字，较短。请剥离模板话术和编辑署名、保留所有核心事实，输出 <=150 字）：\n\n{text}\n\n摘要："
 )
 
-_SHORT_THRESHOLD = 300  # 短稿阈值
+_SHORT_THRESHOLD = 300
 
-# Boilerplate patterns to strip from short drafts in fallback
 _BOILERPLATE_RE = re.compile(
     r"(新华社[^ ]+电\s*|编辑[：:][^。\n]*|策划[：:][^。\n]*|统筹[：:][^。\n]*"
     r"|主笔[：:][^。\n]*|制作[：:][^。\n]*|来源[：:][^。\n]*|责编[：:][^。\n]*)"
@@ -60,14 +71,8 @@ def _strip_boilerplate(text: str) -> str:
 
 
 def _detect_plagiarism(summary: str, raw_text: str, n: int = 15) -> bool:
-    """True if summary contains any contiguous run of >=n chars from raw_text.
-
-    Efficient: scan once over raw_text's substrings of length n; check membership
-    in summary. Cost ~ O(len(raw)). n=10 already used by prompt; here 15 for hard check.
-    """
     if not summary or not raw_text or len(raw_text) < n:
         return False
-    # Use a set of n-grams from raw_text (whitespace normalized) for O(1) lookup.
     raw_norm = re.sub(r"\s+", "", raw_text)
     summ_norm = re.sub(r"\s+", "", summary)
     if len(raw_norm) < n:
@@ -79,48 +84,55 @@ def _detect_plagiarism(summary: str, raw_text: str, n: int = 15) -> bool:
     return False
 
 
-async def _call_deepseek(client: AsyncOpenAI, system: str, user: str) -> str:
-    """Async call DeepSeek chat. Network-bound; wrap with asyncio.to_thread if
-    using sync client. AsyncOpenAI is natively async."""
+_client_singleton: AsyncOpenAI | None = None
+
+
+def _get_client() -> AsyncOpenAI:
+    global _client_singleton
+    if _client_singleton is None:
+        _client_singleton = AsyncOpenAI(
+            api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url
+        )
+    return _client_singleton
+
+
+async def _call_deepseek(
+    client: AsyncOpenAI, system: str, user: str, temperature: float = SUMMARY_TEMP,
+    max_tokens: int = 400,
+) -> str:
     resp = await client.chat.completions.create(
         model=settings.deepseek_model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        temperature=0.3,
-        max_tokens=400,
+        temperature=temperature,
+        max_tokens=max_tokens,
         timeout=60.0,
     )
     return (resp.choices[0].message.content or "").strip()
 
 
-async def generate_summary(raw_text: str | None) -> str:
+async def generate_summary(raw_text: str | None) -> tuple[str, str]:
     """Generate an adaptive, plagiarism-checked summary.
 
-    - None or empty raw_text -> empty string
-    - First attempt: constrained prompt
-    - If 15-gram plagiarism detected: regenerate once with stricter prompt
-    - If still plagiarized: fallback to boilerplate-stripped raw_text (short) or truncated (long)
+    Returns (summary_text, source) where source is 'llm' or 'fallback'.
+    - None/empty raw_text -> ("", "fallback")
+    - First LLM attempt fails plagiarism -> 1 retry with stricter prompt
+    - Retry still plagiarized or LLM call errors -> local boilerplate strip fallback
     """
     if not raw_text or not raw_text.strip():
-        return ""
+        return "", "fallback"
 
     if not settings.deepseek_api_key:
-        # No API key: degraded to local boilerplate strip (allows dev/demo without key)
-        return _strip_boilerplate(raw_text) if len(raw_text) < _SHORT_THRESHOLD else raw_text[:150]
+        return _strip_boilerplate(raw_text) if len(raw_text) < _SHORT_THRESHOLD else raw_text[:150], "fallback"
 
-    client = AsyncOpenAI(
-        api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url
-    )
-
+    client = _get_client()
     user_prompt, meta = _build_prompt(raw_text)
 
-    # First attempt
     try:
-        summary = await _call_deepseek(client, _SYS, user_prompt)
+        summary = await _call_deepseek(client, _SYS, user_prompt, temperature=SUMMARY_TEMP)
     except Exception as e:
         print(f"[summary] deepseek failed: {e}; fallback to local strip")
-        return _strip_boilerplate(raw_text) if meta["mode"] == "short" else raw_text[:150]
+        return _strip_boilerplate(raw_text) if meta["mode"] == "short" else raw_text[:150], "fallback"
 
-    # N-gram plagiarism check (15+ char run)
     if _detect_plagiarism(summary, raw_text, n=15):
         retry_sys = (
             _SYS
@@ -128,25 +140,32 @@ async def generate_summary(raw_text: str | None) -> str:
             "这违反规则。请重新组织语言，确保不与原文任何 15 字连续片段相同。"
         )
         try:
-            summary = await _call_deepseek(client, retry_sys, user_prompt)
+            summary = await _call_deepseek(client, retry_sys, user_prompt, temperature=SUMMARY_TEMP)
         except Exception as e:
             print(f"[summary] deepseek retry failed: {e}")
 
-        # Still plagiarized after retry -> fallback
         if _detect_plagiarism(summary, raw_text, n=15):
             print(f"[summary] plagiarism persists after retry (mode={meta['mode']}, n={meta['n']}); fallback")
-            return _strip_boilerplate(raw_text) if meta["mode"] == "short" else raw_text[:150]
+            return _strip_boilerplate(raw_text) if meta["mode"] == "short" else raw_text[:150], "fallback"
 
-    return summary
+    return summary, "llm"
 
 
-async def summarize_batch(raw_texts: list[str | None]) -> list[str]:
-    """Summarize a batch concurrently. Empty input -> empty output (no API call)."""
-    # Limit concurrency to avoid rate-limits (DeepSeek default ~50 RPM)
+async def summarize_batch(raw_texts: list[str | None]) -> list[tuple[str, str]]:
+    """Summarize a batch concurrently. Returns list of (summary, source) tuples."""
     sem = asyncio.Semaphore(8)
 
-    async def _one(t: str | None) -> str:
+    async def _one(t: str | None) -> tuple[str, str]:
         async with sem:
             return await generate_summary(t)
 
     return await asyncio.gather(*[_one(t) for t in raw_texts], return_exceptions=False)
+
+
+async def rag_call(system: str, user: str, max_tokens: int = 800) -> str:
+    """RAG answer generation call. Lower temperature (0.1) for faithfulness to
+    context. Used by P5. Distinct from summarize in temperature and max_tokens."""
+    client = _get_client()
+    return await _call_deepseek(
+        client, system, user, temperature=RAG_TEMP, max_tokens=max_tokens
+    )

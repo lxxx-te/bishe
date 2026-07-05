@@ -20,16 +20,13 @@ BATCH_SIZE = 16  # DeepSeek RPM-friendly; bge batch easily handles 64+
 async def run_p2(limit: int | None = None) -> dict:
     """Process all reports that still need summary/embedding.
 
-    Args:
-        limit: max reports to process this run (None = all pending)
-
-    Returns:
-        {"processed": N, "skipped_empty_text": K, "errors": M}
+    Re-processes 'fallback' summaries (Q1 fix: only 'llm' source is final).
+    Skips reports where raw_text is NULL (Q2 fix: no placeholder embed).
     """
     async with AsyncSessionLocal() as session:
         stmt = (
             select(NewsReport)
-            .where((NewsReport.summary.is_(None)) | (NewsReport.embedding.is_(None)))
+            .where(NewsReport.summary_source != "llm")
             .order_by(NewsReport.id)
         )
         if limit:
@@ -58,48 +55,58 @@ async def run_p2(limit: int | None = None) -> dict:
                     raw_texts.append(r.raw_text)
                     non_empty_idx.append(j)
 
-            # 1. Summaries (only for non-empty)
+            # 1. Summaries (returns list of (summary, source) tuples)
             try:
-                full_summaries = await summarize_batch(raw_texts)
+                summary_results = await summarize_batch(raw_texts)
             except Exception as e:
                 print(f"[p2] batch {i//BATCH_SIZE} summarize failed: {e}; retry one-by-one")
-                full_summaries = []
+                summary_results = []
                 for t in raw_texts:
                     try:
                         from app.services.summarize import generate_summary
-                        full_summaries.append(await generate_summary(t))
+                        summary_results.append(await generate_summary(t))
                     except Exception:
-                        full_summaries.append("")
+                        summary_results.append(("", "fallback"))
                         errors += 1
 
-            # 2. Write summaries FIRST (so embed failure does not lose summaries)
-            summaries_for_embed = []
+            # 2. Write summaries + source FIRST (so embed failure does not lose summaries)
+            # Build embed inputs only for non-empty raw_text (Q2 fix).
+            embed_inputs = []
+            embed_idx = []  # indices into batch that need embedding
             for j, r in enumerate(batch):
-                summ = full_summaries[j]
+                summ, src = summary_results[j]
                 if summ and summ.strip():
                     r.summary = summ
-                    summaries_for_embed.append(summ)
-                elif r.raw_text:
-                    summaries_for_embed.append(r.raw_text[:500])
-                else:
-                    summaries_for_embed.append("（空内容）")
+                    r.summary_source = src
+                if not r.raw_text or not r.raw_text.strip():
+                    # Q2 fix: empty raw_text -> embedding stays NULL (no placeholder vector)
+                    continue
+                embed_text = summ if (summ and summ.strip()) else r.raw_text[:500]
+                embed_inputs.append(embed_text)
+                embed_idx.append(j)
 
-            try:
-                embeddings = await embed_async(summaries_for_embed)
-            except Exception as e:
-                print(f"[p2] batch {i//BATCH_SIZE} embed failed: {e}; saving summaries only")
-                # Still save summaries even if embed failed.
-                await session.commit()
-                errors += len(batch)
-                processed += sum(1 for s in full_summaries if s)
+            # Commit summaries immediately (save LLM tokens already spent)
+            await session.commit()
+
+            # 3. Embeddings
+            if not embed_inputs:
+                # all rows in this batch were empty raw_text; nothing to embed
+                processed += len(batch)
                 continue
 
-            # 3. Write embeddings
-            for j, r in enumerate(batch):
-                r.embedding = embeddings[j]
-                processed += 1
+            try:
+                embeddings = await embed_async(embed_inputs)
+            except Exception as e:
+                print(f"[p2] batch {i//BATCH_SIZE} embed failed: {e}; summaries saved but no embedding")
+                errors += len(batch)
+                processed += len(batch)
+                continue
 
+            for k, j in enumerate(embed_idx):
+                batch[j].embedding = embeddings[k]
             await session.commit()
+
+            processed += len(batch)
             print(f"[p2] batch {i//BATCH_SIZE+1}: {len(batch)} done (cum {processed})")
 
         return {
