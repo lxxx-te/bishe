@@ -158,6 +158,35 @@ os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 ---
 
+## 坑 16 / fallback 摘要污染 P2 重跑机制
+
+**现象**：无 DEEPSEEK_API_KEY 时跑 P2，会走 fallback 把 summary 填成"原文截 150 字"。填 key 后想跑真 LLM 摘要，但 P2 的 WHERE 是 `summary IS NULL`，已 fallback 的永远不会被 LLM 重生成。
+**原因**：fallback 摘要和 LLM 真摘要用同一列、同一标记区分，无法识别"已处理但是占位"。
+**解法**：加 `summary_source` 枚举列（`llm`/`fallback`），P2 WHERE 改成 `summary_source != 'llm'`，fallback 自动重跑。
+**教训**：fallback 和真值混在一列是数据治理的隐患。Grilling 临时改的占位机制被代码写进默认流程，会埋下污染。
+
+---
+
+## 坑 17 / 空 raw_text 的占位向量污染 ANN
+
+**现象**：第一版 P2 给 raw_text NULL 的报道用占位文字"（空内容）"编码 bge 向量。所有空文报道共享同一向量，P3 ANN dedup 时互相 cosine=1.0 → 误判同事件 → 把多篇空文报道强行并进一个伪事件。
+**原因**：占位向量不该参与 ANN 相似度计算。
+**解法**：空 raw_text 的 embedding 设 NULL（不占位），P3 ANN 查询 WHERE `embedding IS NOT NULL`。空文报道仍参与"多源列表"展示，不参与指纹和向量计算。
+
+---
+
+## 坑 18 / 15-gram 抄袭阈值过严导致 fallback 比例过高
+
+**现象**：130 条真跑数据里 24 条（18%）被 N-gram 校验判定抄袭走 fallback。样本检查发现：DeepSeek 写短稿摘要时会复用"新华社北京6月5日电""国务院日前印发"这类**新闻常用引导短句**——15 字虽然够长但被这些套话触发。
+**根因**：固定字符 window 比对 vs 语义相似度差异，原新闻短语>"新华社北京6月5日电 国务院"刚好 15 字压线触发。
+**待解**（虽代码可跑）：
+- (a) 把 N-gram 阈值放到 20 字（增加宽容度，减少套话误判）
+- (b) 先 strip 引导词再算 N-gram（_strip_boilerplate 已有但没用在 plagiarism 检查前）
+- (c) 用 token-level 比较代替 char-level（避开空格带来的人类友好但语义无关的边界问题）
+- 当前选择：保留 15 字 + retry，larger 数据评测时再调
+
+---
+
 ## 经验提炼（论文"工程难点"一节素材）
 
 1. **首次部署 pgvector 步骤被低估**——apt 不可直装、SSL 证书坑、编译需 postgresql-server-dev-all 头文件、CREATE EXTENSION 权限隔离，完整跑通 4 个独立子坑。
@@ -168,3 +197,5 @@ os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 6. **CVE 驱动的版本强约束**——transformers 4.57 因 CVE-2025-32434 强迫 torch 升 2.6+，时间差依赖升级需要 wget 续传大 wheel 走断点下载。
 7. **HuggingFace 国内可达性**——直连常 SSL 失败，hf-mirror.com 是 sentence-transformers/transformers 生态最可靠的镜像端点，代码层 setdefault 不依赖 .env 配置。
 8. **P2 双阶段事务防 token 损失**——LLM 调用花钱但 embed 失败时 return-summary-as-null 等于双损，事务拆分让 LLM 已花的钱不白丢。
+9. **fallback 与真值混列的污染**——临时占位机制不能和真值共用同一列，否则无法区分"已处理但占位"和"已处理且真"两种状态，重跑决策错乱。Q1 加 summary_source 源列修复。
+10. **字符级 N-gram 抄袭判定与新闻体常用短语冲突**——15字阈值被新闻引导词压线触发，导致正常 LLM 摘要被误判 fallback。后续应 strip 引导词或采用 token-level/20字阈值。
