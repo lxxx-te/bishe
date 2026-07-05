@@ -229,4 +229,17 @@ Vue 3 + Vite 实现三个页面：
 
 ## 状态
 
-规划完成（grilling v6 决策闭环，毕业设计定位明确——系统设计与实现为主体交付，算法与评测为设计验证手段）。P0 脚手架完成：FastAPI 入口、health、配置、DB session、init_schema、7 张表 ORM（含 keywords GIN 索引 + conflict_flags 4 档 status + event_publish_time 索引列）。
+规划完成（grilling v6 决策闭环，毕业设计定位明确——系统设计与实现为主体交付，算法与评测为设计验证手段）。
+
+## P0 完成状态 ✓
+
+FastAPI 入口、health、配置、DB session、init_schema、7 张表 ORM 全部落库通过：
+- `news_report` / `news_event` / `news_report_fact` / `user_profile` / `rag_eval_set` / `rag_eval_run` / `dedup_eval_set`
+- v5 schema 含 `keywords` GIN 索引 + `conflict_flags` 4 档 status（GIN）+ `event_publish_time`（MIN over reports，索引）+ `raw_text` nullable + 删 `hotness` 死列
+- `tests/test_health.py` 2 测试通过
+- `scripts/reset_db.sh` 一键 dev reset（不引 alembic）
+- `CONTEXT.md` 领域词汇、`docs/SETUP.md` 部署、`docs/PITFALLS.md` P0 踩坑记录
+
+P0 共踩 12 个坑（pgvector 不在 apt 源、venv ensurepip 缺、pip 缺、setuptools 太老、torch CUDA bundle 2GB、pip 不续传、SQLAlchemy dialect 前缀 psycopg3 不认、news 用户无 CREATE EXTENSION 权限、event_publish_time 缺、hotness 死列、raw_text NOT NULL、0 测试），详见 [`docs/PITFALLS.md`](docs/PITFALLS.md)。
+
+下一步进 P1 端到端：真实拉新华/人民网/中国新闻网/澎湃 RSS 入库验证。
