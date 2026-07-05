@@ -1,0 +1,32 @@
+# Build artifacts
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+*.egg-info/
+.eggs/
+dist/
+build/
+wheels/
+
+# Data caches
+*.cache.json
+data/raw/
+data/embeddings/
+
+# Local model cache
+models/
+
+# Logs
+*.log
+logs/
+
+# Frontend
+frontend/miniprogram/node_modules/
+frontend/miniprogram/miniprogram_npm/
+
+# Editor
+.idea/
+.vscode/
+.DS_Store

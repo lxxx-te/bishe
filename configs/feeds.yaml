@@ -1,0 +1,13 @@
+feeds:
+  - { name: "新华网",     url: "http://www.xinhuanet.com/rss/" }
+  - { name: "人民网",     url: "http://www.people.com.cn/rss/politics.xml" }
+  - { name: "中国新闻网", url: "https://www.chinanews.com.cn/rss/scroll-news.xml" }
+  # 澎湃经 RSSHub（社区抓取层，非发布方主动授权——论文合规段标注）
+  # 公共实例不稳，可自部署或换 stable 实例
+  - { name: "澎湃新闻",   url: "https://rsshub.app/thepaper/newsDetail" }
+
+newsapi:
+  enabled: true
+  endpoint: "https://newsapi.org/v2/top-headlines"
+  country: "us"   # free tier 不支持 cn，演示用 us
+  page_size: 50

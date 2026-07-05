@@ -1,0 +1,41 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# DB
+asyncpg==0.30.0
+psycopg[binary]==3.2.3
+pgvector==0.3.6
+sqlalchemy[asyncio]==2.0.36
+alembic==1.14.0
+
+# HTTP / RSS
+httpx==0.28.1
+feedparser==6.0.11
+newsapi-python==0.2.7
+pyyaml==6.0.2
+
+# LLM
+openai==1.58.1
+
+# Embeddings / reranker (local, CPU-only torch)
+sentence-transformers==3.3.1
+# torch CPU-only wheel — NOT on PyPI main index, install separately:
+#   pip install torch==2.5.1+cpu --index-url https://download.pytorch.org/whl/cpu
+# Then pip install -r requirements.txt (will skip torch as it's already satisfied)
+# requirements.txt omits pinned torch line to avoid resolver failure on fresh clones.
+
+# Eval
+ragas==0.2.6
+datasets==3.2.0
+pandas==2.2.3
+
+# Config / utils
+python-dotenv==1.0.1
+pydantic-settings==2.7.0
+python-multipart==0.0.20
+
+# Dev
+ruff==0.8.4
+pytest==8.3.4
+pytest-asyncio==0.25.0
