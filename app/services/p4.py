@@ -79,7 +79,7 @@ async def _extract_and_persist_facts(session, limit_events: int | None) -> int:
 
     # Persist rows (one per report × 6 slots)
     fact_rows = []
-    cat_updates: list[tuple[int, str]] = []  # (report_id, category) for logging
+    cat_updates: list[tuple[int, str]] = []  # (report_id, category) for Q1(a) fix
     for r, facts in zip(rows, facts_list):
         if facts is None:
             print(f"[p4] facts: skip report #{r.id} (extraction failed)")
@@ -90,16 +90,20 @@ async def _extract_and_persist_facts(session, limit_events: int | None) -> int:
                 "slot_key": slot_key,
                 "slot_value": facts.get(slot_key, "N/A"),
             })
-        # category stored on event, not report - collect for later
+        # Q1(a) fix: use LLM-derived category (not heuristic), persist to news_report.category
         cat_updates.append((r.id, facts.get("category", "其他")))
 
     if fact_rows:
         await session.execute(pg_insert(NewsReportFact).values(fact_rows))
+        # Q1(a): write category directly onto each report row
+        for rid, cat in cat_updates:
+            await session.execute(
+                update(NewsReport).where(NewsReport.id == rid).values(category=cat)
+            )
         await session.commit()
         print(f"[p4] facts: persisted {len(fact_rows)} fact rows "
-              f"({len(fact_rows)//6} reports × 6 slots)")
+              f"({len(fact_rows)//6} reports × 6 slots, {len(cat_updates)} category")
 
-    # Return mapping of report_id -> category (for event category derivation)
     return len(rows)
 
 
@@ -111,7 +115,7 @@ async def _merge_and_persist_per_event(session) -> dict:
     stats = {"events": 0, "merged": 0, "conflicts": 0, "single_source": 0}
 
     for ev in events:
-        # Fetch all reports under this event
+        # Fetch all reports under this event (now with non-null category per Q1 fix)
         rstmt = select(NewsReport).where(NewsReport.event_id == ev.id).order_by(NewsReport.id)
         reports = (await session.execute(rstmt)).scalars().all()
         if not reports:
@@ -119,18 +123,17 @@ async def _merge_and_persist_per_event(session) -> dict:
 
         # Fetch each report's fact rows
         fact_rows_by_report: dict[int, dict] = {}
+        cats_seen: list[str] = []
         for r in reports:
             fstmt = select(NewsReportFact).where(NewsReportFact.report_id == r.id)
             fr = (await session.execute(fstmt)).scalars().all()
             if not fr:
-                # No facts yet (extraction failed); treat as N/A
                 continue
             d = {f.slot_key: f.slot_value for f in fr}
             fact_rows_by_report[r.id] = d
-            # capture category from any report with facts
-            cat = d.get("category")
-            if not hasattr(r, "_category_seen"):
-                pass  # we'll derive from event below
+            # Q1(a) fix: collect LLM-derived category from each report
+            if r.category:
+                cats_seen.append(r.category)
 
         facts_list = list(fact_rows_by_report.values())
         if not facts_list:
@@ -141,29 +144,16 @@ async def _merge_and_persist_per_event(session) -> dict:
         ev.fact_slots = fact_slots
         ev.conflict_flags = conflict_flags
 
-        # Category: pick most common across reports' category hints
-        # (We stored category per-extraction; need to fetch from fact rows'
-        # 'category' key - but category is NOT in news_report_fact (only 6 slots).
-        # So re-derive from keywords + fact_slots now.)
-        from app.services.fact_extract import CATEGORIES
-        # Look up category from any report's extraction (we'd need to store it)
-        # For now: derive heuristically from keywords
-        kws = ev.keywords or []
-        cat_guess = "其他"
-        for kw in kws:
-            if any(k in kw for k in ("习近平", "国务院", "两会", "党", "政府", "官员", "主席", "总理")):
-                cat_guess = "政治"; break
-            if any(k in kw for k in ("经济", "金融", "GDP", "财政", "投资", "外资", "消费")):
-                cat_guess = "经济"; break
-            if any(k in kw for k in ("文化", "非遗", "艺术", "遗产", "博物馆")):
-                cat_guess = "文化"; break
-            if any(k in kw for k in ("科技", "AI", "芯片", "芯片", "互联网", "技术", "数字")):
-                cat_guess = "科技"; break
-            if any(k in kw for k in ("国际", "外交", "会见", "访问", "G20", "联合国")):
-                cat_guess = "国际"; break
-            if any(k in kw for k in ("体育", "足球", "奥运", "冠军", "比赛")):
-                cat_guess = "体育"; break
-        ev.category = cat_guess
+        # Q1(a) fix: event.category via MAJORITY VOTE over reports' LLM categories
+        # (replaces earlier hard-coded keyword heuristic).
+        if cats_seen:
+            from collections import Counter
+            ranking = Counter(cats_seen).most_common()
+            # Pick most common; tie-break: first by source_count order
+            top, _ = ranking[0]
+            ev.category = top
+        else:
+            ev.category = ev.category or "其他"
 
         stats["events"] += 1
         if ev.source_count and ev.source_count > 1:

@@ -147,13 +147,16 @@ def merge_event_facts(reports_facts: list[dict]) -> tuple[dict, dict]:
         else:
             status, out_vals = _grade_generic(values)
 
-        # Chosen value is first non-N/A if consistent/merged, else "N/A" placeholder
-        if status == "consistent":
-            fact_slots[slot] = out_vals[0] if out_vals else "N/A"
-        elif status == "merged":
+        # Q2(a) fix: P5 RAG reads event.fact_slots only (doesn't separately
+        # query conflict_flags). To expose conflict candidates to RAG prompt,
+        # store merged candidate string in fact_slots (e.g. "12 / 15 / 12").
+        # consistent / merged -> single chosen value
+        # uncertain / conflict -> "v1 / v2 / ..." (P5 LLM sees all candidates
+        #   and the P7 frontend renders in red/grey accordingly)
+        if status in ("consistent", "merged"):
             fact_slots[slot] = out_vals[0] if out_vals else "N/A"
         else:  # uncertain / conflict
-            fact_slots[slot] = out_vals[0] if out_vals else "N/A"
+            fact_slots[slot] = " / ".join(out_vals) if out_vals else "N/A"
             conflict_flags[slot] = {
                 "status": status,
                 "values": out_vals,
