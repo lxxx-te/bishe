@@ -23,7 +23,9 @@ from app.core.config import settings
 from app.models import NewsEvent, NewsReport
 from app.services.embed import embed_async, embed_one
 
-DEDUP_THRESHOLD = 0.75  # Q19: lowered from 0.88 because keyword gate prevents false-merge
+DEDUP_THRESHOLD = 0.90  # Q7-Q18: tuned from 100-pair gold set (precision=0.929, recall=1.000, F1=0.963)
+# Note: at 0.75 the threshold was catastrophic (precision 0.134). Keyword gate
+# acts as additional safety margin on top of this already-validated threshold.
 
 
 def _cosine(a, b) -> float:
