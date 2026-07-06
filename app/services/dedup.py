@@ -85,15 +85,22 @@ async def _spawn_event(
 
 
 async def _attach_to_event(
-    session: AsyncSession, report: NewsReport, event: NewsEvent
+    session: AsyncSession, report: NewsReport, event: NewsEvent, new_keywords: list[str]
 ) -> None:
     """Attach report to existing event and recompute event center (Q20 fix).
 
-    For now (P3 scope), we just attach + bump source_count. The async
-    merged_summary re-embed is deferred to P4 (which handles full aggregation).
+    Q2 fix: merge new report's keywords into event.keywords (union, dedup, cap 6)
+    so the SQL gate keeps widening as more reports attach - prevents later reports
+    with divergent keywords from missing this event and spawning duplicates.
+
+    Q20 deferred to P4: async re-embed merged_summary; for now event.embedding
+    stays at first-report anchor (will be fixed by P4 aggregation).
     """
     report.event_id = event.id
     event.source_count = (event.source_count or 1) + 1
+    # Union keywords (cap at 6 to keep GIN index efficient)
+    merged = list(set((event.keywords or []) + new_keywords))[:6]
+    event.keywords = merged
     # Update event_publish_time to min
     if report.publish_time and (
         not event.event_publish_time or report.publish_time < event.event_publish_time
@@ -126,7 +133,7 @@ async def dedup_one(
             best_event = ev
 
     if best_event and best_sim > DEDUP_THRESHOLD:
-        await _attach_to_event(session, report, best_event)
+        await _attach_to_event(session, report, best_event, keywords)
         return {"action": "attach", "event_id": best_event.id, "similarity": best_sim}
 
     # No candidate above threshold -> spawn
