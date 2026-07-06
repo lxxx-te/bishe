@@ -605,6 +605,186 @@ async def increment_today_async(n: int = 1) -> int:
 
 ---
 
+## 七·五、论文补充物（Kimi 必须做，否则答辩穿）
+
+> 代码完成 ≠ 毕设完成。毕设交付物 = 代码 + 论文 + 答辩 PPT + 评测表 + 架构图。
+> Kimi 除了修漏洞 / P6 评测 / P7 前端外，**还欠约 15h 的论文写作**。这一层翻译工作量不记录在 HANDOFF 之前的 207h 估算里，**必须单独排工时**。
+
+### 7.5.1 论文章节骨架（标准毕设结构）
+
+```
+第 1 章 绪论
+  1.1 研究背景与意义（多源新闻重复报道/信息冗余/事实散落问题）
+  1.2 国内外研究现状（新闻事件检测/语义去重/RAG/事件级检索）
+  1.3 本文主要工作（四层架构 + 三段管道 + 两套评测）
+  1.4 论文组织结构
+
+第 2 章 相关技术
+  2.1 RSS 数据采集与 feedparser
+  2.2 大语言模型摘要生成（DeepSeek 受约束 prompt）
+  2.3 语义向量嵌入与 BGE-small-zh
+  2.4 cross-encoder 重排与 bge-reranker
+  2.5 检索增强生成 RAG 架构
+  2.6 PostgreSQL + pgvector 向量数据库与 HNSW 索引
+  2.7 受约束生成与防幻觉技术
+
+第 3 章 需求分析
+  3.1 功能需求（四层：采集/处理/检索/前端）
+  3.2 非功能需求（合规性/性能/可复现性/可扩展性）
+  3.3 数据源分析与合规边界
+
+第 4 章 系统总体设计
+  4.1 总体架构（四层分层，按数据流向自顶向下）
+  4.2 数据库设计（三层 1:N:6N E-R 模型、pgvector 向量列、GIN 索引）
+  4.3 模块划分与接口（采集/摘要/去重/互证/检索/前端）
+  4.4 关键设计决策（关键词闸门、异步重 embed、4 档冲突分级、整句缓冲）
+
+第 5 章 详细设计与实现
+  5.1 数据采集模块（httpx+UA+timeout+HTML 清洗+URL 去重）
+  5.2 摘要与向量化模块（DeepSeek 自适应+N-gram 校验+BGE 本地）
+  5.3 事件聚合模块（关键词闸门+ANN 0.90+attach 扩集）
+  5.4 事实互证模块（5W1H 抽取+时间归一+4 档分级+多源重 embed）
+  5.5 RAG 检索模块（三段管道+受约束生成+整句缓冲 SSE+200/日上限）
+  5.6 前端展示模块（Vue 3 onboarding+事件流+RAG 对话框）
+
+第 6 章 系统测试与设计验证
+  6.1 功能测试（单元测试 15+ + 集成测试端到端）
+  6.2 去重阈值选取实验（100 对标注集 + P/R/F1 曲线）
+  6.3 RAG 管道消融实验（50 条评测集 + 5 行对比表）
+  6.4 性能测试（各模块延迟 + reranker 首加载 + ANN HNSW vs 全表对比）
+  6.5 设计验证结论
+
+第 7 章 总结与展望
+  7.1 工作总结
+  7.2 系统局限性（数据源不足/时区/N-gram 阈值/无 auth）
+  7.3 未来工作（自部署 RSSHub 扩源/tzinfo 归一化/NLI 替 N-gram/评测集扩/OAuth/Alembic）
+
+参考文献（20-30 篇）
+致谢
+附录（关键代码片段、评测集样本、消融表完整数据）
+```
+
+### 7.5.2 相关工作文献综述（第 2 章必备）
+
+最低需引用的 6 篇真文献（其他 15-20 篇综述可扩充）：
+
+1. **RAG**：Lewis et al. 2020 "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks" NeurIPS
+2. **新闻事件检测**：GDELT 项目 / Petrović et al. 2010 "Streaming First Story Detection with Application to Twitter" KDD
+3. **语义相似度/去重**：Reimers & Gurevych 2019 "Sentence-BERT" EMNLP
+4. **cross-encoder rerank**：Nogueira & Cho 2019 "Passage Re-ranking with BERT" arXiv
+5. **HNSW**：Malkov & Yashunin 2018 "Efficient and robust approximate nearest neighbor search using HNSW" TPAMI
+6. **中文 BGE 嵌入**：Xiao et al. 2023 "C-Pack: Packaged Resources To Advance General Chinese Embedding Learning" arXiv
+
+### 7.5.3 系统架构图/数据流图/三段管道流程图/E-R 图
+
+毕设论文 50% 的视觉分在图，目前 0 张。必须画 4 张：
+
+| 图 | 工具 | 章节归属 |
+| :--- | :--- | :--- |
+| 四层架构图（采集→处理→检索→前端模块框+箭头） | draw.io / Mermaid / plantUML | 第 4.1 节 |
+| E-R 图（3 实体 + 关系：1 事件 N 报道 / 1 报道 6 槽位） | draw.io / dbdiagram.io | 第 4.2 节 |
+| 数据流图（RSS → news_report → summary/embedding → event → RAG → 答案） | Mermaid sequence/plantUML | 第 4.1 节 |
+| 三段管道流程图（time→ANN→rerank→generate+整句缓冲） | draw.io / plantUML activity | 第 5.5 节 |
+
+答辩 PPT 第一张就是架构图。
+
+### 7.5.4 测试覆盖率补全（第 6.1 节）
+
+当前仅 5 个 smoke test。毕设"系统测试"章需要每个模块都覆盖。至少补 10-15 个单元测试 + 1 个集成测试：
+
+| 模块 | 需补测试 |
+| :--- | :--- |
+| P2 摘要 | N-gram 抄袭检测正常/异常分支、fallback 路径、自适应长短稿分支 |
+| P3 去重 | 关键词闸门相交/不相交、ANN 判定 >0.90/<0.90、attach 扩集 keywords |
+| P4 互证 | 4 档分级规则（consistent/merged/uncertain/conflict 各一例）、N/A skip |
+| P5 RAG | 时间窗解析（今日/昨日/最近N天/无时间词）、SSE 整句缓冲边界、拒答判定 |
+| 集成 | P1→P2→P3→P4→P5 端到端 happy path |
+
+### 7.5.5 性能测试（第 6.4 节）
+
+需写 `scripts/benchmark.py` 跑一次出表：
+
+| 指标 | 测法 |
+| :--- | :--- |
+| P1 抓取 130 篇耗时 | time 装饰器 |
+| P2 LLM 摘要 130 篇耗时（含 N-gram） | wall clock |
+| P2 BGE embedding 130 篇 CPU 耗时 | wall clock |
+| P3 ANN 单次去重延迟 | HNSW 走索引 vs 全表扫对比 |
+| P5 RAG 端到端延迟 | 拆分 time + ANN + rerank + LLM 流式 4 段 |
+| P5 reranker 加载 | 首次 3s / singleton 后 0ms |
+
+### 7.5.6 运行成本分析（第 4 章/第 7 章子节）
+
+| 资源 | 用量 | 月成本 |
+| :--- | :--- | :--- |
+| DeepSeek API | 130 篇 83062 tokens + 50 条 RAG eval ~20000 tokens | ¥0.5-1 |
+| BGE 本地 CPU 推理 | 0 | 0 |
+| bge-reranker 本地 | 0 | 0 |
+| PostgreSQL | 本地 | 0 |
+| **总计** | | **<¥2/月** |
+
+答辩可甩此表证明"低成本可运行"。
+
+### 7.5.7 与现有系统对比表（第 1.2 节子节）
+
+| 维度 | 今日头条 | Google News | 本系统 |
+| :--- | :--- | :--- | :--- |
+| 多源合并 | 否 | 部分（按主题聚合） | 是（事件级语义聚合） |
+| 事实互证 | 否 | 否 | 是（5W1H 4 档分级） |
+| 问答 RAG | 否 | 否 | 是（三段管道 + 引用） |
+| 引用溯源 | 否 | 链原文 | 事件级引用 + 原文跳转 |
+| 个性化推荐 | 是（深度 CTR） | 是（协同过滤） | 否（显式兴趣标签） |
+
+### 7.5.8 系统局限性（第 7.2 节，主动写不要藏）
+
+把已知漏洞搬过来：
+
+- 数据源仅 2 家可用（新华 / 澎湃实测失效，赖自部署 RSSHub）
+- `publish_time` 时区混乱（naive UTC vs 北京时间混合）
+- 多日期字符串解析 false-positive（如"2025-05-09 通过、08-01 施行"判 conflict）
+- N-gram 20 字阈值仍误判新闻引导词，13/130 fallback
+- 200/日上限对高并发不够（毕设演示级）
+- 无用户认证（user_id 客户端生成）
+
+主动写"局限"比被问穿好。
+
+### 7.5.9 未来工作（第 7.3 节）
+
+- 自部署 RSSHub 扩源（澎湃、B 站、微博热搜）
+- 引 tzinfo 全库归一化时区
+- 用 NLI 模型替 N-gram 抄袭检测（entailment 判定语义抄袭）
+- OAuth 用户认证
+- Alembic 迁移支持生产部署
+- 评测集扩到 200 对 / 100 条问答提统计显著性
+- 移动端小程序版本
+- HNSW ef_search 调参
+
+### 7.5.10 摘要 + Abstract（论文第一页，中英文）
+
+> **摘要**：针对多源新闻重复报道导致的信息冗余与事实散落问题，本文设计并实现了一个事件级语义聚合与检索系统。系统采用关键词闸门 + BGE 向量 ANN 两级去重，将多家媒体报道合并为事件单元；抽取 5W1H 事实槽位做多源互证与 4 档冲突分级；RAG 检索采用时间预过滤 + 向量召回 + cross-encoder 重排三段管道，DeepSeek 受约束生成带事件引用的答案。基于 130 篇真实新闻的实验表明，去重阈值 precision 达 0.929、recall 1.000；50 条问答评测集 set recall@5 达 X.XX，消融实验证明三段管道各段均有贡献。
+
+### 7.5.11 答辩 PPT 截图准备（5-8 张系统截图）
+
+- Swagger UI 首页（`/docs`）
+- 事件流 API 返回 JSON
+- 单事件含 `fact_slots` / `conflict_flags` JSON
+- RAG SSE 流式响应截图
+- 数据库 psql 查询截图
+- 消融对比表
+- P/R/F1 调参曲线图（matplotlib 生成 PNG）
+
+### 7.5.12 dedup_gold.csv 确认已 commit
+
+`data/dedup_gold.csv` 是 100 对人工标注 ground truth。Kimi 接手第一步：
+```bash
+git log --oneline data/dedup_gold.csv    # 确认 label 列已入 git
+git show HEAD:data/dedup_gold.csv | head -3   # 看 label 列非空
+```
+
+如未 commit，立刻 `git add data/dedup_gold.csv && git commit -m "data: dedup_gold 100-pair human labels"`。
+
+---
+
 ## 八、环境配置
 
 ### 依赖安装顺序
