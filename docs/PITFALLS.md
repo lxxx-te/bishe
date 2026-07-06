@@ -187,6 +187,68 @@ os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 ---
 
+## 坑 19 / 关键词列用 JSONB 不支持 && 数组重叠操作
+
+**现象**：P3 关键词闸门的 SQL `WHERE keywords && new_keywords` 报 `operator does not exist: jsonb && unknown`。
+**原因**：`&&` 在 PostgreSQL 里是**数组重叠操作符**，对 jsonb 类型 `&&` 是另一个语义（jsonb 内容重叠），不是数组元素的 any-match。
+**解法**：把 `news_event.keywords` 列从 `JSONB` 改成 `ARRAY(Text)`，加 GIN 索引。这样 `&&` 直接走数组重叠语义，GIN 索引支持高效查询。
+
+---
+
+## 坑 20 / psycopg3 返回 pgvector 是字符串不是 list
+
+**现象**：`cur.execute("SELECT id, embedding FROM news_report...")` 拿到的 `embedding` 字段是 `'[0.1, 0.2, ...]'` 字符串，直接 `list(emb)` 拆成单个字符串字符——`sum(x*y)` 算 cosine 报 TypeError。
+**原因**：psycopg3 默认对 pgvector 类型不解析，返回原始字符串。
+**解法**：写 `_parse_vec` 处理两种形态：
+```python
+def _parse_vec(emb):
+    if isinstance(emb, (list, tuple)): return [float(x) for x in emb]
+    s = str(emb).strip().lstrip('[').rstrip(']')
+    return [float(p) for p in s.split(',') if p.strip()]
+```
+
+---
+
+## 坑 21 / pgvector 列返回 numpy array，`not a` 触发 ambiguous ValueError
+
+**现象**：`if not a or not b or len(a) != len(b)` 在 `_cosine` 里报 `truth value of array with more than one element is ambiguous`。
+**原因**：pgvector 通过 asyncpg 路径返回 numpy array，`bool(numpy_array)` 触发 `any/all` 要求。
+**解法**：先用 `if a is None or b is None` 显式判 None，再用 `try: a = list(a)` 强转回 list 再走纯 Python 比较。
+
+---
+
+## 坑 22 / 魔数阈值 0.75 灾难（precision 0.134）— 这是 Q1 grilling 救命的一条
+
+**现象**：未经调参直接设 DEDUP_THRESHOLD=0.75 跑 P3，得到 86 events / 46 attach 表面上"看起来合理"。
+**反查真相**：造 100 对人工盲标集扫阈值 0.50-0.95，发现 0.75 阈值下 precision 仅 0.134——**86% 判定为"同事件"的对其实是不同事件**。整批"46 attach"里只有约 6 个真同事件，其余 40 个是 false-merge。
+**根因**：bge-small-zh 在中文新闻摘要语义空间里，"相同主题不同事件"的摘要向量也可能 cosine 0.75–0.85（如"两会"和"习近平颁条例"向量相似因为都涉及国家机关用语），0.75 阈值在这种"同领域不同事件"上失效。
+**解法**：100 对人工盲标 + 扫阈值画 P/R/F1，按 Q7 非对称成本（false-merge 灾难性）选 precision ≥ 0.9 的最高 recall 点 → 阈值 = **0.90**（precision 0.929 / recall 1.000 / F1 0.963）。
+**重跑结果**：86 events → 114 events（少合并但每个合并都是真的）；最大聚合 16 源 → 4 源（不再把 16 篇同主题不同事件绑一起）。
+**教训**：阈值不能是拍脑袋"测一下感觉合适"。任何 cutoff 都必须有 ground truth 调参集支撑。grilling 在 Q7 钉死这条原则、Q18 钉死近邻采样、这里终于坐实——光靠"觉得合理"会埋 false-merge 雷到 P4 互证才爆。
+
+---
+
+## 坑 23 / attach 后不扩集 event.keywords — SQL 闸门形同虚设
+
+**现象**：第一版 `_attach_to_event` 只 bump source_count 不并 keywords。事件首篇 spawn keywords=[A,B,C]，第 2 篇 attach 进来 keywords=[B,D,E] 但 event.keywords 仍 [A,B,C]。第 3 篇 keywords=[D,F,G] 查闸门 `event.keywords && [D,F,G]` 不重叠 → spawn 新事件 → 漏 attach。
+**根因**：domain 规则上"事件关键词集"应随挂载报道**累积扩集**而非固定首篇，但 CONTEXT.md 没明示这点（遗漏）。
+**解法**：`_attach_to_event` 改成并集：
+```python
+event.keywords = list(set((event.keywords or []) + new_keywords))[:6]
+```
+cap 在 6 防止 GIN 索引失效。重跑后 `#74`事件 keywords 从首篇 3 扩到 4 篇 attach 后 6 个，正确接纳不同角度报道的入闸。
+**教训**：domain glossary 必须显式描述聚合实体的"演化语义"——事件不只是"首篇+附属"，它的 keywords/embedding 都会随 attach 进化。Q2 第一次反查就被戳穿。
+
+---
+
+## 坑 24 / `_attach_to_event` 调用方没传 keywords 参数 — 修一半
+
+**现象**：第一次修 Q2 改了 `_attach_to_event` 签名加 `new_keywords: list[str]` 参数，但调用方仍传旧的两个参数 → TypeError。
+**解法**：调用点改成 `await _attach_to_event(session, report, best_event, keywords)`。
+**教训**：改函数签名要同步改调用点；type hint 在 Python 不强制，是软约束，靠 grep。
+
+---
+
 ## 经验提炼（论文"工程难点"一节素材）
 
 1. **首次部署 pgvector 步骤被低估**——apt 不可直装、SSL 证书坑、编译需 postgresql-server-dev-all 头文件、CREATE EXTENSION 权限隔离，完整跑通 4 个独立子坑。

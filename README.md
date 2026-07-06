@@ -235,11 +235,43 @@ Vue 3 + Vite 实现三个页面：
 
 FastAPI 入口、health、配置、DB session、init_schema、7 张表 ORM 全部落库通过：
 - `news_report` / `news_event` / `news_report_fact` / `user_profile` / `rag_eval_set` / `rag_eval_run` / `dedup_eval_set`
-- v5 schema 含 `keywords` GIN 索引 + `conflict_flags` 4 档 status（GIN）+ `event_publish_time`（MIN over reports，索引）+ `raw_text` nullable + 删 `hotness` 死列
+- v5 schema 含 `keywords` ARRAY(Text) GIN 索引 + `conflict_flags` 4 档 status（GIN）+ `event_publish_time`（MIN over reports，索引）+ `raw_text` nullable + `summary_source`/`summary_model`/`summary_tokens` 三列记录摘要来源、模型版本与 token 用量
 - `tests/test_health.py` 2 测试通过
 - `scripts/reset_db.sh` 一键 dev reset（不引 alembic）
 - `CONTEXT.md` 领域词汇、`docs/SETUP.md` 部署、`docs/PITFALLS.md` P0 踩坑记录
 
-P0 共踩 12 个坑（pgvector 不在 apt 源、venv ensurepip 缺、pip 缺、setuptools 太老、torch CUDA bundle 2GB、pip 不续传、SQLAlchemy dialect 前缀 psycopg3 不认、news 用户无 CREATE EXTENSION 权限、event_publish_time 缺、hotness 死列、raw_text NOT NULL、0 测试），详见 [`docs/PITFALLS.md`](docs/PITFALLS.md)。
+P0 共踩 12 个坑，详见 [`docs/PITFALLS.md`](docs/PITFALLS.md)。
 
-下一步进 P1 端到端：真实拉新华/人民网/中国新闻网/澎湃 RSS 入库验证。
+## P1 完成状态 ✓
+
+真实 RSS 端到端入库 130 篇（人民网 100 + 中国新闻网 30）。新华网主站 /rss/ 实测 403、子频道 404；澎湃经 RSSHub 公共实例实测超时——只剩 2 个可用源。ingest 代码加 `httpx` + User-Agent + 15s timeout + HTML 清洗 + in-batch URL 去重 + `asyncio.to_thread` 包装，1 个源挂不会卡整条 pipeline。
+
+## P2 完成状态 ✓
+
+130 篇报道摘要 + 向量入库：
+- 117 LLM 真摘要（avg 103 字，自适应：长稿压到 ~100 字、短稿 <300 字只剥模板话术 150 字以内）
+- 13 fallback（N-gram 20 字校验判抄袭重试后仍命中走本地截断）
+- BGE-small-zh 本地 CPU 512 维 embedding（hf-mirror.com 镜像绕 SSL，零 API 成本）
+- 1 条空 raw_text 的 embedding NULL（Q2 修复：无占位向量污染 ANN）
+- DeepSeek 行级版本 `deepseek-v4-flash` + token 83062 共耗（Q15 评测可复现护甲）
+- temperature 分离：summarize 0.3 / rag_call 0.1（Q3 决策）
+- 超短 <50 字 raw_text 跳过 LLM（Q5 修复省 token）
+
+## P3 完成状态 ✓
+
+关键词闸门 + ANN 事件去重全链路跑通。130 篇报道 → 114 个事件（10 个多源合并、最大 4 源聚合、104 个单源独特事件）。
+
+**Q1 调参救命**——魔数 0.75 阈值精度仅 0.134（86% false-merge），100 对人工盲标集 + 扫阈值画 P/R/F1 曲线后定阈值 = **0.90**（precision 0.929 / recall 1.000 / F1 0.963）。重跑 P3 后：86 events → 114 events，看似少合并但每个合并都是真的。
+
+**Q2 修复**——`_attach_to_event` 现在 union `event.keywords ∪ new_keywords`（cap 6），事件关键词随挂载报道累积扩集，防止后续报道关键词发散绕过闸门 spawn 假事件。验证：`#74 银川办不成事反映窗口`4 源合并，keywords 从首篇 3 扩到 6 个。
+
+调参工具：
+- `scripts/build_dedup_gold.py` 近邻采样（200 篇 × Top-3 → 266 对 → 抽 100 对）
+- `scripts/label_dedup_gold.py` 交互式 CLI（y/n/s/b/q 标注 100 对）
+- `scripts/tune_dedup_threshold.py` 扫 0.50–0.95 P/R/F1 表 + 标 Q7 precision ≥ 0.9 推荐阈值
+
+P3 共踩 6 个坑（keywords JSONB 不支持 `&&`、psycopg3 返回 pgvector 为字符串、numpy array 触发 ambiguous truth、魔数 0.75 灾难、attach 不扩集 keywords 漏并、签名改了调用未同步），详见 [`docs/PITFALLS.md`](docs/PITFALLS.md)。
+
+## 下一步 P4
+
+5W1H 事实槽位抽取 + 事件级合并 + 4 档冲突分级（consistent/merged/uncertain/conflict）+ 异步重 embed merged_summary（Q20 事件中心修复）+ 时间词归绝对日（Q12 假冲突规避）+ HNSW 索引建立（Q5 P5 ANN 准备）。
