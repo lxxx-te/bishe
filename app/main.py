@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import health, ingest, p2, p3, p4, reports
+from app.api import health, ingest, p2, p3, p4, rag, reports
 from app.db.session import engine
 
 
@@ -31,6 +31,7 @@ app.include_router(reports.router, prefix="/api")
 app.include_router(p2.router, prefix="/api")
 app.include_router(p3.router, prefix="/api")
 app.include_router(p4.router, prefix="/api")
+app.include_router(rag.router, prefix="/api")
 
 
 @app.get("/")
