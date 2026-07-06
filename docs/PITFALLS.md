@@ -249,6 +249,25 @@ cap 在 6 防止 GIN 索引失效。重跑后 `#74`事件 keywords 从首篇 3 �
 
 ---
 
+## 坑 25 / Q2 决策被代码违反 — category LLM 抽了被硬编码 heuristic 覆盖
+
+**现象**：grilling 钉死 Q2(a) "category 从 event.keywords 派生 + 在抽 5W1H 那次 LLM 调用顺手归类"。实测 `fact_extract.py` 花了 token 调出 category，但 `p4.py` 的 `_merge_and_persist_per_event` 直接扔掉 LLM 结果，改用硬编码 `if any(k in kw for k in ("习近平","国务院")): cat_guess = "政治"` 这种脆弱 heuristic。
+**根因**：开发顺序是 fact_extract 先写完含 category，写到 p4 时忘记把 LLM 结果通道打通，临时手写个 heuristic 兜底。
+**后果双重浪费**：① 花 token 让 LLM 算了不用；② 用更差的 heuristic 覆盖。答辩被问"category 怎么分类"会答"关键词匹配"——和 Q2(a) 钉死的"LLM 抽 5W1H 时顺手归类"对不上。
+**解法**：`news_report` 加 `category` 列；P4 在持久化 fact rows 时顺手 `UPDATE news_report SET category=...`；事件级用 `Counter(cats_seen).most_common()` 多数投票。
+**教训**：grilling 拍板的决策对应到代码后必须 grep 验证"决策名-代码-答辩口径"三点对齐。开发顺序里的临时兜底兜成了默认流程，是典型的决策漂移。
+
+---
+
+## 坑 26 / fact_slots 在 conflict 时只存首值 — P5 RAG 看不到冲突
+
+**现象**：`fact_merge.py` 把 `fact_slots[slot]` 在 conflict 时填成 `out_vals[0]`，`conflict_flags[slot].values` 才存所有候选。但 P5 RAG 主要读 `event.fact_slots` 而非 `conflict_flags`——RAG 答案看到冲突的第一条值，违背 Q12 "系统不判谁对，保留全部让用户判"。
+**根因**：fact_slots 写法保留了"single 选择值"语义，但 P5 RAG 不读 conflict_flags 这个附属字段，是设计接口与下游未对齐。
+**解法**：fact_slots[slot] 在 conflict/uncertain 时改存 `"v1 / v2 / v3"` 合并串，让 facts_string 一行传给 RAG 就含全部候选。`#51.howmany = "8章44条 / 第809号令 / 8章44条"` ✓
+**教训**：domain 字段写入时必须显式画像"下游读什么"。grilling 钉死的"不判谁对且保全部候选"必须落到负责回传给 RAG 的那一列，不能挂在附属 dict 里。
+
+---
+
 ## 经验提炼（论文"工程难点"一节素材）
 
 1. **首次部署 pgvector 步骤被低估**——apt 不可直装、SSL 证书坑、编译需 postgresql-server-dev-all 头文件、CREATE EXTENSION 权限隔离，完整跑通 4 个独立子坑。

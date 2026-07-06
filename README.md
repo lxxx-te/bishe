@@ -272,6 +272,25 @@ P0 共踩 12 个坑，详见 [`docs/PITFALLS.md`](docs/PITFALLS.md)。
 
 P3 共踩 6 个坑（keywords JSONB 不支持 `&&`、psycopg3 返回 pgvector 为字符串、numpy array 触发 ambiguous truth、魔数 0.75 灾难、attach 不扩集 keywords 漏并、签名改了调用未同步），详见 [`docs/PITFALLS.md`](docs/PITFALLS.md)。
 
-## 下一步 P4
+## P4 完成状态 ✓
 
-5W1H 事实槽位抽取 + 事件级合并 + 4 档冲突分级（consistent/merged/uncertain/conflict）+ 异步重 embed merged_summary（Q20 事件中心修复）+ 时间词归绝对日（Q12 假冲突规避）+ HNSW 索引建立（Q5 P5 ANN 准备）。
+事件级事实槽位 + 4 档冲突分级 + 多源事件重 embed 全链路跑通。
+
+- **129 报道 × 6 槽位 = 774 fact rows 入库**。N/A 占比分布（LLM 真按摘要内容判，不靠防幻觉）：who 1% / what 0% / when 28% / where 26% / why 13% / howmany 65%（howmany 高 N/A 合理——多数时政新闻无具体数值）
+- **4 档冲突分级应用**：
+  - `consistent` 默认（值相同）→ 多数事件此档
+  - `merged` 子集关系合并（代码支持，本轮未触发样本）
+  - `uncertain` 时间 window ≤3 天内同槽位值不同 → 灰字显示候选
+  - `conflict` 显著不同 → 红字保留全部候选
+- **Q1(a) category LLM 多数投票**：事件级 category 是成员报道 LLM 抽出的 category 用 Counter.most_common 投票，不再用硬编码关键词 heuristic。分布：政治 45 / 社会 25 / 文化 22 / 经济 11 / 体育 4 / 国际 3 / 其他 3 / 科技 1
+- **Q2(a) conflict fact_slots 合并串**：`fact_slots[slot]` 在 conflict/uncertain 时存 `v1 / v2 / ...` 让 P5 RAG 一次性看到全部候选（否则只看单值会丢冲突）。
+- 样本：`#51 4源` `fact_slots.howmany = "8章44条 / 第809号令 / 8章44条"` ✓ LLM 看到冲突对与共识
+- **Q12 时间归绝对日 + 3 天 window**：`when` 槽位 LLM prompt 强制按 publish_time 反算"今日/昨日"；事件级合并时 window 3 天内的不同日期判 uncertain（不标红），显著差（>3 天）才标 conflict
+- **Q20+Q4+Q5 多源事件重 embed**：10 个 source_count ≥ 2 事件由 LLM 合并摘要后 BGE 重 encode，单 batch 顺序执行无 race condition（不用 BackgroundTask 异步）
+- **Q3 时区混乱延迟**——按 Q3(a) 决策：P4 直接用库内 publish_time naive，按天精度反算"今日/昨日"。P5 时间预过滤按天过滤，UTC/北京时间差异（<24h）从相关到 follow-up 不影响按三天窗的 RAG 查询
+
+P4 共踩 2 个 grilling 漏洞（Q1 category 被 heuristic 覆盖 + Q2 conflict 单值丢失），详见 [`docs/PITFALLS.md`](docs/PITFALLS.md)。
+
+## 下一步 P5
+
+RAG 三段管道：① SQL 时间预过滤 + 兴趣标签 ② pgvector ANN 向量召回 Top-20（建 HNSW 索引）③ bge-reranker cross-encoder 精排 Top-5。DeepSeek 受约束生成：强制事件引用 + 不足拒答。SSE 流式 + 整句缓冲后渲染（保引用在句尾出现）。200/日上限控量。
