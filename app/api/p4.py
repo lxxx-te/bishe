@@ -1,4 +1,4 @@
-"""POST /api/p4/run - trigger P4 (5W1H extraction + event merge + re-embed)."""
+"""POST /api/p4/run - trigger P4 (category extraction + multi-source re-embed)."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Query
