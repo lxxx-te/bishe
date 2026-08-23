@@ -35,21 +35,21 @@ async def test_persist_dedup_in_batch(clean_news_report):
         FeedItem(
             source_site="news_aggregator_test_src",
             title="test A",
-            raw_text="hello",
+            raw_text="这是第一条完整报道的正文。",
             original_url="https://example.com/test-p1-a",
             publish_time=None,
         ),
         FeedItem(
             source_site="news_aggregator_test_src",
             title="test A (dup)",
-            raw_text="hello again",
+            raw_text="这是同一条完整报道的另一份拷贝。",
             original_url="https://example.com/test-p1-a",  # same URL
             publish_time=None,
         ),
         FeedItem(
             source_site="news_aggregator_test_src",
             title="test B",
-            raw_text="world",
+            raw_text="这是第二条完整报道的正文。",
             original_url="https://example.com/test-p1-b",
             publish_time=None,
         ),
@@ -82,26 +82,19 @@ async def test_persist_dedup_against_db(clean_news_report):
 
 
 @pytest.mark.asyncio
-async def test_persist_null_raw_text_ok(clean_news_report):
-    """raw_text is nullable (Q2 decision): empty-content items still persist."""
+async def test_persist_null_raw_text_rejected(clean_news_report):
+    """Q10 admission gate supersedes Q2: empty-content items are NOT reports,
+    rejected at persist time (残句/空壳不产生幻影事件)."""
     items = [
         FeedItem(
             source_site="news_aggregator_test_src",
             title="no body",
-            raw_text="",  # empty -> stored as NULL per persist.py
+            raw_text="",  # empty -> incomplete -> rejected
             original_url="https://example.com/test-p1-null-text",
             publish_time=None,
         ),
     ]
     async with AsyncSessionLocal() as s:
         stats = await persist_items(s, items)
-    assert stats["inserted"] == 1, stats
-
-    async with AsyncSessionLocal() as s:
-        res = await s.execute(
-            select(NewsReport).where(
-                NewsReport.original_url == "https://example.com/test-p1-null-text"
-            )
-        )
-        row = res.scalar_one()
-        assert row.raw_text is None or row.raw_text == ""
+    assert stats["rejected"] == 1, stats
+    assert stats["inserted"] == 0, stats

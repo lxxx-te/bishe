@@ -2,6 +2,12 @@ feeds:
   # 经实测可用（HTTP 200 返回 RSS XML），ingest 代码对其他端点失败会跳过
   - { name: "人民网",     url: "http://www.people.com.cn/rss/politics.xml" }
   - { name: "中国新闻网", url: "https://www.chinanews.com.cn/rss/scroll-news.xml" }
+  # 澎湃新闻：经本地自部署 RSSHub（docker，端口 1200）拉取。
+  #   featured = 首页头条（20 条）；sidebar/hotNews = 澎湃热榜（20 条）。
+  #   注：/thepaper/channel/25950（时事频道）实测 503 —— RSSHub 该路由上游 API
+  #   解析 bug（cheerio.load expects a string），故用热榜路由替代。
+  - { name: "澎湃新闻", url: "http://localhost:1200/thepaper/featured" }
+  - { name: "澎湃热榜", url: "http://localhost:1200/thepaper/sidebar/hotNews" }
   # 新华网主站 /rss/ 实测 403，子频道 /rss/politics.xml 和 /rss/world.xml 均 404。
   #   待自部署 RSSHub 后启用：  - { name: "新华网", url: "https://rsshub.app/xinhuanet/news" }
   # 澎湃经 RSSHub 公共实例 rsshub.app 实测超时；自部署 RSSHub 后再启用。
