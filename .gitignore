@@ -29,4 +29,5 @@ frontend/miniprogram/miniprogram_npm/
 # Editor
 .idea/
 .vscode/
-.DS_Store.opencode/
+.DS_Store
+.opencode/
