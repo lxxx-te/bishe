@@ -6,6 +6,26 @@
 
 ---
 
+## 〇、2026-08 grilling v7 重大变更记录（本会话已执行）
+
+> 上一轮交接（v6）后，用户经再次 grilling 钉死了 7 个新决策并已全部实现。**以下内容已过时**，接手时以本记录为准：
+
+| 决策 | 内容 | 实现状态 |
+| :--- | :--- | :--- |
+| Q31 删 5W1H + 冲突分级 | 事实互证模块整体移除（fact_extract 瘦身为纯 category 抽取、p4 重写、fact_merge.py 删除、RAG context 去槽位、前端去冲突 UI、live 库清残留字段） | ✅ 已完成 |
+| Q32 冻结评测库 | `news_aggregator_eval` = pg_dump 快照，评测脚本经 `DB_URL` env 覆盖指向它 | ✅ 已完成 |
+| Q33 重跑评测 | 48 条重跑：recall@5 0.452（持平）/ refusal 0.958（持平）/ citation 1.0（持平）/ faithfulness **0.978→0.941**（删槽位后如实下降） | ✅ 已完成 |
+| Q34 每日简报 | `GET /api/digest?date=&days=`，按多源度（COUNT(DISTINCT source_site)）排序 Top-10，复用 merged_summary 零新增 LLM | ✅ 已完成（前端 /digest 页） |
+| Q35 RSS 2.0 事件流 | `GET /feed/events.rss?days=&category=`，一条 = 一个事件，link = 首篇原文 | ✅ 已完成（前端订阅按钮） |
+| Q36 澎湃加源 | 自部署 RSSHub Docker :1200。`/thepaper/featured` ✅ / `/thepaper/channel/25950` ❌（RSSHub 上游 bug 503，改用 `/thepaper/sidebar/hotNews`）。ingest 后 +70 报道，多源事件 10→15，澎湃×中新网×热榜三方聚合已出现 | ✅ 已完成 |
+| Q37 README 重定位 | README 改为答辩文档（删 2.3 事实互证/删 P0-P7 状态跟踪/加输出层/加澎湃/更新答辩口径与评测数字） | ✅ 已完成 |
+
+**当前数据规模**：200 报道（人民网 100 / 中新网 60 / 澎湃 20 / 澎湃热榜 20），176 事件（15 多源）。
+**当前服务**：后端 :8000（uvicorn，须 `env -u ALL_PROXY -u all_proxy` 启动）、前端 :5173（vite dev）、RSSHub :1200（docker，--restart=always）、PostgreSQL :5432。
+**下一任务**：论文 4 图 + 答辩 PPT + 快照重打（答辩证库已冻结，live 库若继续 ingest 不影响评测）。
+
+---
+
 ## 一、项目定位
 
 ### 标题
@@ -85,15 +105,14 @@ RAG: 用户问 → 时间预过滤 → 标签预过滤 → 向量召回 Top-20
 
 ### Q3 冷启动（已降级）
 
-**决策**：T+0 纯热门（多源报道数=热度）→ 行为渐进个性化。但推荐/推送已降级为投递细节不做行为画像。
+**决策**：T+0 纯热门（多源度=几家媒体报道）→ 行为渐进个性化。但推荐/推送已降级为投递细节不做行为画像。
 
 **为什么**：推荐是今日头条主场，玩具级不可验证。改用显式兴趣标签过滤，规避个保法。
 
-### Q4 立场对比 → 事实互证
+### Q4 立场对比 → ~~事实互证~~（Q31 已废弃）
 
-**决策**：立场对比降级重命名为"多源事实互证"。不做立场谱（三家官媒同立场谱退化），改做 5W1H 事实拼图，矛盾标红。
-
-**为什么**：事实互证不依赖源立场多样性、可量化（槽位填充率、矛盾数）。
+**决策（v6）**：立场对比降级重命名为"多源事实互证"，做 5W1H 事实拼图矛盾标红。
+**Q31 变更（v7）**：事实互证模块整体移除（答辩价值低、成本高）。系统回到"事件级聚合 + 摘要 + RAG + 输出层"。论文中此节改写为"事件级合并摘要"，不出现 5W1H 术语。
 
 ### Q5 RAG 深度
 
@@ -137,11 +156,14 @@ RAG: 用户问 → 时间预过滤 → 标签预过滤 → 向量召回 Top-20
 
 **决策**：(A) 抓全文入库不删。`raw_text` 允许 NULL（RSS 空内容项也存 title+link）。
 
-### Q12 互证退化 → 扩源
+### Q12 扩源 → 澎湃经自部署 RSSHub ✅ 已落地
 
-**决策**：(ii) 加澎湃经 RSSHub 撑冲突触发率。但澎湃 RSSHub 公共实例超时，待自部署。
+**决策（v6）**：(ii) 加澎湃经 RSSHub 撑覆盖。澎湃 RSSHub 公共实例超时，待自部署。
 
-**连带**：时间词归绝对日 + 弱冲突分级（3 天 window 内 uncertain 不标红）。
+**Q36 落地（v7）**：Docker 自部署 RSSHub `:1200`（`docker run -d --name rsshub --restart=always -p 1200:1200 diygod/rsshub`）。
+- `/thepaper/featured` ✅（20 条）+ `/thepaper/sidebar/hotNews` ✅（20 条）
+- `/thepaper/channel/25950` ❌ RSSHub 上游 bug（cheerio.load expects a string），已在 feeds.yaml 注释说明
+- 入库 +70 报道；澎湃 × 中新网 × 热榜三方聚合事件已产生（多源事件 10→15）
 
 ### Q13 流式
 
@@ -203,15 +225,11 @@ RAG: 用户问 → 时间预过滤 → 标签预过滤 → 向量召回 Top-20
 
 ### Q27 category LLM 多数投票
 
-**决策**：LLM 抽 5W1H 时顺手按 8 类分类（政治/经济/文化/社会/科技/国际/体育/其他）。事件级 category 用成员报道 LLM category 的多数投票。**不用硬编码关键词 heuristic**。
+**决策**：LLM 按 8 类分类（政治/经济/文化/社会/科技/国际/体育/其他）。事件级 category 用成员报道 LLM category 的多数投票。**不用硬编码关键词 heuristic**。（5W1H 抽取部分随 Q31 移除，category 保留。）
 
-### Q28 conflict fact_slots 合并串
+### Q28 / Q29 事实槽位合并串与时间 window
 
-**决策**：`fact_slots[slot]` 在 conflict/uncertain 时存 `v1 / v2 / ...` 合并串。P5 RAG 只读 fact_slots 就能看到全部冲突候选（否则只看首值丢冲突）。
-
-### Q29 时间 window 3 天
-
-**决策**：`when` 槽位合并时 3 天 window 内不同值判 `uncertain`（灰字不标红），显著差（>3 天）才判 `conflict`（红字）。
+**Q31 已废弃**：`fact_slots` 合并串、`when` 槽位 3 天 window 均随事实互证模块整体移除。RAG context 不再注入事实槽位块（faithfulness 0.978→0.941 的部分原因）。
 
 ### Q30 超短 raw_text 跳 LLM
 
@@ -271,9 +289,11 @@ RAG: 用户问 → 时间预过滤 → 标签预过滤 → 向量召回 Top-20
     │   ├── ingest.py             # POST /api/ingest/run（P1 抓取触发）
     │   ├── p2.py                 # POST /api/p2/run（摘要+向量化触发）
     │   ├── p3.py                 # POST /api/p3/run（事件去重触发）
-    │   ├── p4.py                 # POST /api/p4/run（5W1H+互证触发）
+    │   ├── p4.py                 # POST /api/p4/run（category 抽取+投票+多源重 embed）
     │   ├── rag.py                # POST /api/rag/ask（SSE 流式 RAG）
-    │   └── reports.py            # GET /api/reports（浏览报道/事件）
+    │   ├── reports.py            # GET /api/reports（浏览报道/事件）
+    │   ├── digest.py             # GET /api/digest（Q34 每日简报，多源优先 Top-10）
+    │   └── feed.py               # GET /feed/events.rss（Q35 RSS 2.0 事件流）
     │
     └── services/                 # 业务逻辑层
         ├── embed.py              # BGE-small-zh 本地 embedding（singleton）
@@ -281,9 +301,8 @@ RAG: 用户问 → 时间预过滤 → 标签预过滤 → 向量召回 Top-20
         ├── keywords.py           # LLM 抽 3 关键词
         ├── dedup.py              # P3 事件去重（关键词闸门 + ANN 0.90）
         ├── p2.py                 # P2 编排器（摘要+embedding 批处理）
-        ├── p4.py                 # P4 编排器（5W1H+互证+重embed）
-        ├── fact_extract.py       # LLM 抽 5W1H + category
-        ├── fact_merge.py         # 事件级 4 档冲突分级合并
+        ├── p4.py                 # P4 编排器（category 抽取+投票+多源重 embed）
+        ├── fact_extract.py       # LLM 抽 category（Q31 瘦身，无 5W1H）
         │
         ├── ingest/
         │   ├── __init__.py       # P1 编排器（load feeds + fetch + persist）
@@ -301,7 +320,7 @@ RAG: 用户问 → 时间预过滤 → 标签预过滤 → 向量召回 Top-20
 
 ## 四、数据库设计
 
-### 7 张表（三层结构：1 事件 : N 报道 : 6N 槽位）
+### 6 张表（两层结构：1 事件 : N 报道）
 
 #### `news_report`（报道表）
 
@@ -331,23 +350,16 @@ RAG: 用户问 → 时间预过滤 → 标签预过滤 → 向量召回 Top-20
 | merged_summary | Text nullable | LLM 合并摘要（多源事件重算） |
 | embedding | Vector(512) nullable | 事件中心向量（Q20 重 embed） |
 | keywords | ARRAY(Text) GIN index | Q19: 3 关键词，attach 时 union 扩集 cap 6 |
-| fact_slots | JSONB | Q28: 5W1H 值，conflict 时存 'v1 / v2 / ...' 合并串 |
-| conflict_flags | JSONB GIN index | {slot: {status, values, note}} status ∈ {consistent,merged,uncertain,conflict} |
-| source_count | Integer index | 报道数 = 热度排序键 |
+| fact_slots | JSONB | **Q31 废弃**：保留列但恒为空（live 库已清），代码不再读写 |
+| conflict_flags | JSONB GIN index | **Q31 废弃**：保留列但恒为空，代码不再读写 |
+| source_count | Integer index | 报道篇数计数（dedup attach 时 +1）；对外展示/排序口径 = 多源度 COUNT(DISTINCT source_site)，API 字段 source_breadth |
 | event_publish_time | DateTime index | Q1: MIN over reports.publish_time |
 | category | String(32) index | Q27: 多数投票 |
 | ts | DateTime server_default now() index | 入库时间 |
 
-**索引**：HNSW on embedding（vector_cosine_ops, m=16, ef_construction=64）、GIN on keywords、GIN on conflict_flags、btree on event_publish_time/source_count/category/ts。
+**索引**：HNSW on embedding（vector_cosine_ops, m=16, ef_construction=64）、GIN on keywords、btree on event_publish_time/source_count/category/ts。
 
-#### `news_report_fact`（事实槽位表）
-
-| 列 | 类型 | 说明 |
-| :--- | :--- | :--- |
-| id | Integer PK | |
-| report_id | FK news_report.id CASCADE index | |
-| slot_key | String(16) | who/what/when/where/why/howmany |
-| slot_value | Text nullable | 'N/A' 或绝对日期或事实值 |
+> `news_report_fact` 表（事实槽位表）Q31 起不再使用，live 库已 TRUNCATE，仅评测快照库保留历史数据。
 
 #### `user_profile`（用户兴趣表）
 
@@ -405,203 +417,141 @@ RAG: 用户问 → 时间预过滤 → 标签预过滤 → 向量召回 Top-20
 - 100 对 dedup_gold.csv 已人工标注完成
 - 调参工具三脚本就位
 
-### P4 事实互证 ✓ 完成
+### P4 事件分类 + 重 embed ✓ 完成（Q31 瘦身）
 
-- 129 报道 × 6 槽位 = 774 fact rows
-- N/A 分布：who 1% / what 0% / when 28% / where 26% / why 13% / howmany 65%
-- 4 档冲突分级：consistent / merged / uncertain(3天window) / conflict
-- category LLM 多数投票（政治 45 / 社会 25 / 文化 22 / 经济 11 / ...）
-- conflict fact_slots 存 'v1 / v2 / ...' 合并串（Q28 修复）
-- 10 多源事件 LLM 合并摘要 + BGE 重 embed
+- **Q31 变更**：5W1H 事实抽取 + 4 档冲突分级整体移除。P4 现做：category 抽取（LLM 8 类）+ 多数投票 + 多源事件合并摘要重 embed。
+- category LLM 多数投票（政治 / 社会 / 文化 / 经济 / 体育 / 国际 / 其他 / 科技）
+- 多源事件 LLM 合并摘要 + BGE 重 embed
+- `news_report_fact` 表不再写入（live 库已 TRUNCATE）
 
-### P5 RAG 检索问答 ✓ 完成（但有已知漏洞待修，见第六节）
+### P5 RAG 检索问答 ✓ 完成（SSE 中文乱码已修）
 
 - 三段管道：时间预过滤 → pgvector ANN Top-20（HNSW）→ bge-reranker Top-5
 - 受约束生成：temp=0.1 + 强制引用 [事件#X] + 不足拒答
 - SSE 流式 + 整句缓冲后渲染（Q21）
+- 修复 `unicode_escape` 导致的乱码问题；SSE 现在按规范输出多行 `data:`
 - 200/日上限文件计数器
-- 端到端测试通过："习近平会见白俄罗斯总统"→召回 #28→答案含 [事件#28] + 正确呈现冲突"北京中南海/北京"
+- 端到端测试通过："最近有什么科技新闻" → 召回 #42 等事件 → 答案纯中文 + 含 `[事件#42]` 引用
+
+### P6 评测 ✓ 完成（Q32/Q33 冻结库重跑）
+
+- `scripts/build_rag_gold.py` 生成 50 条 RAG 问答 gold 模板
+- `scripts/label_rag_gold.py` 交互式标注工具，已人工完成 48/50 条（2 条 skipped）
+- **Q32**：评测库 `news_aggregator_eval`（pg_dump 快照冻结），评测脚本经 `DB_URL` env 覆盖指向
+- **Q33**：Q31 改动后 48 条全量重跑：recall@5 **0.452** / refusal **0.958** / citation **1.0** / faithfulness **0.941**（v1 0.978，删槽位后如实下降）
+- `scripts/run_rag_eval.py` 跑 recall@5 + faithfulness + 拒答率
+- `scripts/run_ablation.py` 跑 5 行消融 baseline
+- `data/rag_eval_summary.json` / `data/rag_ablation_results.json` 已产出（v1 备份：`data/rag_eval_*_v1_5w1h.json`）
+
+### P7 Vue 前端 ✓ 完成
+
+- `frontend/vue-app/` Vue 3 + Vite 脚手架已搭好
+- 后端 CORS 已配置（允许 `http://localhost:5173`）
+- 三个页面：Onboarding 兴趣标签 / EventStream 事件流 / RagChat RAG 问答
+- EventCard 卡片展示：类别/时间/多源度、摘要、关键词、详情抽屉
+- EventStream 支持搜索、多源度/时间排序、类别过滤
+- RagChat 支持推荐问题、清空对话、SSE 流式渲染、引用 `[事件#N]` 按钮弹出事件详情弹窗
+- `npm run build` 通过，dev server 可在 `http://localhost:5173` 访问
 
 ---
 
-## 六、已知漏洞及修复方案（P5 grilling 发现，接手者必须修）
+## 六、已修复漏洞与仍存局限
 
-### 漏洞 1（致命）/ 拒答判定写死 `refusal: false`
+### 已修复（P5 后续已修）
 
-**位置**：`app/services/rag/answer.py` 第 194-197 行
+| # | 问题 | 位置 | 修复状态 |
+| :--- | :--- | :--- | :--- |
+| 1 | 拒答判定写死 `refusal: false` | `app/services/rag/answer.py` | ✓ 已累积 `full_text`，按 `"信息不足" in full_text` 真实判定 |
+| 2 | SSE meta 事件 JSON 不规范 | `app/services/rag/answer.py` | ✓ 已用 `json.dumps({'event_ids': event_ids})` |
+| 3 | "开始生成..."预通知撒谎 | `app/services/rag/answer.py` | ✓ 已删除预通知，LLM 直接流式输出 |
+| 4 | 异常分支 `done.refusal=false` 撒谎 | `app/services/rag/answer.py` | ✓ 异常分支返回 `refusal: true, error: true` |
+| 5 | 引用不解析不校验 | `app/services/rag/answer.py` | ✓ 已用正则提取 `[事件#N]` 并校验是否在召回 Top-5 |
+| 6 | dailylimit 文件计数器 race | `app/services/rag/dailylimit.py` | ✓ 已加 `asyncio.Lock`，调用方用 `increment_today_async` |
+| 7 | context 格式不清晰 | `app/services/rag/answer.py` | ✓ `_build_context` 已统一缩进格式 |
+| 9 | 多日期字符串 false-positive | `app/services/fact_merge.py` | ✓ `_try_parse_date` 已提取所有日期取最新值 |
+| — | SSE 中文乱码 | `app/services/rag/answer.py` | ✓ 已移除 `encode('unicode_escape')`，新增 `_sse_token` 按 SSE 规范输出多行 `data:` |
 
-**问题**：
-```python
-full_text = ""  # we lost full text
-yield "event: done\ndata: {\"refusal\": false}\n\n"  # 写死 false
-```
+### 仍存在的已知局限（写进论文 7.2 节）
 
-LLM 真说"信息不足"时 done 事件仍标 refusal=false。P6 评测的拒答率指标起点崩。
-
-**修复方案**：
-```python
-# 流式过程中累积 full_text
-full_text = ""
-# 在每个 sentence flush 时追加
-full_text += sentence
-# 结尾真实判定
-is_refusal = "信息不足" in full_text
-yield f'event: done\ndata: {{"refusal": {str(is_refusal).lower()}}}\n\n'
-```
-
-### 漏洞 2（致命）/ SSE meta 事件 JSON 不规范
-
-**位置**：`app/services/rag/answer.py` 第 126 行
-
-**问题**：`{event_ids}` 是 Python list repr 直接拼接，不是合法 JSON 序列化。
-
-**修复方案**：
-```python
-import json
-yield f"event: meta\ndata: {json.dumps({'event_ids': event_ids})}\n\n"
-```
-
-### 漏洞 3（致命）/ "开始生成..."通知在拒答时撒谎
-
-**位置**：`app/services/rag/answer.py` 第 150 行
-
-**问题**：每次都先发"检索到 N 个候选事件，开始生成..."，但 LLM 可能紧接着输出"信息不足"。用户视觉感受"系统生成了一些东西"但实际是拒答。
-
-**修复方案**：删除这行预通知，让 LLM 第一句直接流式出来。或改成中性提示"检索完成，正在生成..."。
-
-### 漏洞 4（严重）/ 异常分支 done.refusal=false 撒谎
-
-**位置**：`app/services/rag/answer.py` 第 186-188 行
-
-**问题**：`except Exception` 输出"RAG 生成失败"但 done 仍标 refusal=false。前端按"成功"处理但内容是错误串。
-
-**修复方案**：异常分支设 `is_refusal = True` 或新增 `error: true` 字段。
-
-### 漏洞 5（严重）/ 引用不解析不校验
-
-**位置**：`app/services/rag/answer.py` 整个文件
-
-**问题**：LLM 输出 `[事件#28]` 但代码不解析、不验证 event_id 是否在召回 Top-5 里。LLM 可能编一个 #999。P6 评测无法自动测"引用准确率"。
-
-**修复方案**：
-```python
-import re
-# 流末正则提取所有 [事件#N]
-citations = re.findall(r'\[事件#(\d+)\]', full_text)
-cited_ids = [int(c) for c in citations]
-valid_citations = [c for c in cited_ids if c in event_ids]
-citations_valid = len(cited_ids) == len(valid_citations)
-# done 事件加字段
-yield f'event: done\ndata: {{"refusal": {str(is_refusal).lower()}, "citations": {json.dumps(cited_ids)}, "citations_valid": {str(citations_valid).lower()}}}\n\n'
-```
-
-### 漏洞 6（中等）/ dailylimit 文件计数器 race condition
-
-**位置**：`app/services/rag/dailylimit.py`
-
-**问题**：`get_today_count` + `increment_today` 是读-改-写，并发请求会丢增量。
-
-**修复方案**：
-```python
-import asyncio
-_lock = asyncio.Lock()
-
-async def increment_today_async(n: int = 1) -> int:
-    async with _lock:
-        return increment_today(n)
-```
-
-调用方改为 `await increment_today_async(1)`。
-
-### 漏洞 7（轻微）/ context 格式不够清晰
-
-**位置**：`app/services/rag/answer.py` `_build_context`
-
-**问题**：`5W1H 事实:` 和 `冲突标记:` 之间分隔不一致，长 context 多事件时 LLM 容易丢字段。
-
-**修复方案**：统一用 `\n  - ` 缩进格式，每个字段一行。
-
-### 漏洞 8（轻微）/ publish_time 时区混乱
-
-**库内 publish_time 混合 UTC naive 和北京时间 naive**（feedparser 返回 UTC，人民网 RSS 给北京时间）。Q3(a) 决策按天精度处理不严格 timezone-aware。P5 时间预过滤按天过滤不炸，但论文要诚实标注"统一以本地时间解析，精度为天"。
-
-### 漏洞 9（轻微）/ 多日期字符串解析 false-positive
-
-**位置**：`app/services/fact_merge.py` `_try_parse_date`
-
-**问题**：字符串 "2025-05-09（通过）、2025-08-01（施行）" 被解析成首日 2025-05-09，与 08-01 比较差 80 天判 conflict——但实质是同一事件不同时间节点的互补，应判 merged。
-
-**修复方案**：提取所有 YYYY-MM-DD 子串取最新日期作为 when 值。
+1. **数据源覆盖有限**：新华网 403 仍不可用；澎湃经自部署 RSSHub 已接入（featured + 热榜），channel 路由为 RSSHub 上游 bug 暂不可用。
+2. **`publish_time` 时区不统一**：feedparser 返回 UTC naive，人民网 RSS 给北京时间 naive，目前按天精度处理。
+3. **N-gram 20 字阈值仍误判新闻引导词**：13/130 篇走 fallback。
+4. **200/日上限仅适合演示**：毕设级，非生产并发设计。
+5. **无用户认证**：`user_id` 由客户端生成 UUID，无服务端 auth。
+6. **事件流页面后端缺少高级过滤**：目前只有类别过滤 + 搜索 + 排序，缺少时间范围、多源度区间等过滤。
+7. **前端 UI 仍较朴素**：功能完整但视觉打磨不足（答辩截图够用，但不够精致）。
 
 ---
 
-## 七、剩余工作（按优先级排）
+## 七、剩余工作（按优先级排，接手者重点）
 
-### 优先级 1 / 修 P5 已知漏洞（4-8h）
+### 优先级 1 / 论文图表与答辩 PPT（30-40h，当前在途）
 
-见第六节漏洞 1-5。这是 P6 评测的前提——拒答率指标拿不到正确信号评测就白做。
+> 代码已跑通，现在进入“把代码翻译成论文章节和 PPT”阶段。这是毕设能否过的关键。
 
-### 优先级 2 / P6 评测（26h）
+#### 1.1 必须画的 4 张图（用于论文第 4 章 + PPT 首页）
 
-#### 6.1 50 条 RAG 问答 gold 集（12h）
+| 图 | 工具建议 | 章节 | 状态 |
+| :--- | :--- | :--- | :--- |
+| 四层架构图（采集→处理→检索→前端） | draw.io / Mermaid | 4.1 | 待画 |
+| E-R 图（事件/报道/槽位三层 1:N:6N） | draw.io / dbdiagram.io | 4.2 | 待画 |
+| 数据流图（RSS → 报道 → 摘要/向量 → 事件 → RAG 答案） | Mermaid sequence | 4.1 | 待画 |
+| 三段管道流程图（time→ANN→rerank→generate） | draw.io | 5.5 | 待画 |
 
-- 手写 50 个问题 + 标注 gold 事件集（set recall@5 要求标完整 gold）
-- 写 `scripts/build_rag_gold.py` 生成 CSV 模板（问题 + report_id_a/b/... placeholder）
-- 写 `scripts/label_rag_gold.py` 交互式标注工具
-- 标注规范：
-  - 简单查询 gold = 1 个事件
-  - 宽泛查询 gold = N 个事件，标全
-  - 不能用系统输出当标签（Q7 反循环论证红线）
+#### 1.2 必须补的 3 张表（用于论文第 6 章）
 
-#### 6.2 跑 recall@5 + faithfulness + 拒答率（6h）
-
-- 写 `scripts/run_rag_eval.py` 读 gold CSV → 跑系统 → 算指标
-- recall@5 = `min(|Top-5 ∩ gold|, 5) / min(|gold|, 5)`
-- faithfulness 用 RAGAS（LLM-judge，公开标注为指标非保证）
-- 拒答率 = 拒答次数 / 50
-
-#### 6.3 5 行消融 baseline（8h，水论文用）
-
-| 配置 | recall@5 | faithfulness |
+| 表 | 数据位置 | 状态 |
 | :--- | :--- | :--- |
-| ① dense Top-5（无时间过滤、无 reranker、无受约束生成） | | |
-| ② ① + 时间预过滤 | | |
-| ③ ② + reranker | | |
-| ④ ③ + 受约束生成 | | |
-| ⑤ 最终版（= ④） | | |
+| 去重阈值调参表 / P-R-F1 曲线 | `data/dedup_gold.csv` + `scripts/tune_dedup_threshold.py` | 待整理成论文表格 |
+| RAG 消融实验 5 行表 | `data/rag_ablation_results.json` | 已产出，待格式化 |
+| RAG 评测指标表（recall@5 / faithfulness / 拒答率） | `data/rag_eval_summary.json` | 已产出，待格式化 |
 
-跑 5 次填数字。每行证明一段管道有贡献。
+#### 1.3 答辩 PPT 准备
 
-#### 6.4 数据库快照（2h）
+- 10-15 页：背景 → 架构 → 关键技术 → 评测 → 演示截图 → 总结
+- 系统截图 5-8 张：Swagger `/docs`、事件流、事件详情抽屉、RAG 对话、数据库查询、消融表
 
-- 答辩前一周 `pg_dump` 导出快照
-- 评测脚本恢复快照后跑，保证可复现
+### 优先级 2 / 测试覆盖率补齐（8-12h）
 
-### 优先级 3 / P7 Vue 前端（15h）
+目前只有 5 个 smoke test。第 6.1 节需要更多单元/集成测试：
 
-- onboarding 兴趣标签页（选 2-3 个标签存 user_profile）
-- 事件流卡片列表（摘要 + 事实拼图 + 矛盾标红 + 多源列表）
-- RAG 对话框（SSE 解析、整句渲染、引用可点溯源、原文链接跳转）
-- 步骤：
-  1. `npm create vite@latest frontend -- --template vue`
-  2. 装 axios 或用 fetch
-  3. 三个页面组件
-  4. SSE 用 EventSource API
-  5. CORS 配置（后端加 `CORSMiddleware`）
+| 模块 | 需补测试 |
+| :--- | :--- |
+| P2 摘要 | N-gram 正常/异常分支、fallback 路径、自适应长短稿分支 |
+| P3 去重 | 关键词闸门相交/不相交、ANN >0.90/<0.90、attach 扩集 keywords |
+| P4 互证 | 4 档分级各一例、N/A skip、多日期解析 |
+| P5 RAG | 时间窗解析、SSE 整句缓冲边界、拒答判定、引用校验 |
+| 集成 | P1→P2→P3→P4→P5 端到端 happy path |
 
-### 优先级 4 / 更新 README + PITFALLS + 答辩准备（22h）
+### 优先级 3 / 性能基准脚本（4-6h）
 
-- README 反映 P5/P6/P7 完成状态
-- PITFALLS 追加 P5-P7 踩坑
-- 论文（含合规段、评测表、答辩话术）
-- 答辩 PPT
+写/跑 `scripts/benchmark.py`，出一张性能表（第 6.4 节）：
 
-### 优先级 5 / 可选增强
+| 指标 | 当前状态 |
+| :--- | :--- |
+| P1 抓取 130 篇耗时 | 待测 |
+| P2 LLM 摘要 130 篇耗时 | 待测 |
+| P2 BGE embedding CPU 耗时 | 待测 |
+| P3 ANN 单次去重延迟 | 待测 |
+| P5 RAG 端到端延迟（拆分 4 段） | 待测 |
 
-- 自部署 RSSHub 启用澎湃新闻（撑冲突触发率）
-- HNSW 索引参数调优（`ef_search`）
-- N-gram 阈值再调（20 字仍误判新闻引导词）
-- 时区归一化（引 tzinfo 全库迁移）
+### 优先级 4 / 论文正文写作（20-30h）
+
+按 7.5.1 节骨架补完各章节。优先写：
+1. 摘要 + Abstract
+2. 第 4 章 系统总体设计（架构图 + E-R 图 + 数据流图）
+3. 第 5 章 详细设计（去重、RAG 管道、前端）
+4. 第 6 章 测试与验证（指标表 + 消融表 + 性能表）
+5. 第 7 章 局限与未来工作
+
+### 优先级 5 / 可选 polish（时间够再做）
+
+- 前端标题从默认 `vue-app` 改成系统名
+- 事件流加时间范围过滤
+- 自部署 RSSHub 启用澎湃/新华网
+- 时区统一加 `tzinfo`
+- HNSW `ef_search` 调参
+- 移动端小程序版本（如果导师要求演示）
 
 ---
 
@@ -739,7 +689,7 @@ async def increment_today_async(n: int = 1) -> int:
 
 把已知漏洞搬过来：
 
-- 数据源仅 2 家可用（新华 / 澎湃实测失效，赖自部署 RSSHub）
+- 数据源覆盖有限（新华网 403；澎湃已接 featured+热榜，channel 路由 RSSHub bug）
 - `publish_time` 时区混乱（naive UTC vs 北京时间混合）
 - 多日期字符串解析 false-positive（如"2025-05-09 通过、08-01 施行"判 conflict）
 - N-gram 20 字阈值仍误判新闻引导词，13/130 fallback
@@ -879,10 +829,10 @@ asyncio.run(main())
    > "毕业设计，系统设计与实现是主交付物。两套标注集 + 消融对比表是第 5 章的设计验证手段，验证去重阈值和三段管道选型的合理性，不是研究贡献本身。"
 
 2. **被问"创新点在哪？"**
-   > "在设计层面——三层 1:N:6N 数据模型支持事件级聚合与事实互证、关键词闸门 + ANN 两级去重解决事件生命周期问题、异步重 embed 解决事件中心偏差、三段检索管道分级精筛。这些都是设计决策。"
+   > "在设计层面——两层 1:N 数据模型支持事件级聚合、关键词闸门 + ANN 两级去重解决事件生命周期问题、异步重 embed 解决事件中心偏差、三段检索管道分级精筛、事件级输出（每日简报 / RSS 事件流）复用聚合成果。这些都是设计决策。"
 
 3. **被问"和今日头条有何不同"**
-   > "头条做 per-user 个性化分发深度 CTR 预估，我做事件级聚合 + 事实互证 + 可溯源问答，方向相反，刻意不在此轴竞争。"
+   > "头条做 per-user 个性化分发深度 CTR 预估，我做事件级聚合 + 可溯源问答 + 事件级输出，方向相反，刻意不在此轴竞争。"
 
 4. **被问"洗稿风险"**
    > "摘要为大模型抽象式事实复述，经 N-gram 校验防复现原文片段。系统不公开部署仅作研究原型遵循合理使用。"
@@ -903,43 +853,69 @@ asyncio.run(main())
 
 ---
 
-## 十一、对 Kimi 2.7 的具体指令
+## 十一、对下一位 AI 的具体指令
 
-### 第一步：修 P5 已知漏洞
+### 当前状态（接手时）
 
-按第六节漏洞 1-5 修 `app/services/rag/answer.py`：
-1. 流式过程累积 `full_text`
-2. 结尾真实判定 `信息不足` 二字 → `refusal` 真实
-3. meta 事件用 `json.dumps`
-4. 删除"开始生成..."预通知
-5. 流末正则提取 `[事件#N]` 解析 citations + 校验是否在 Top-5
-6. 异常分支标 `error: true`
-7. dailylimit 加 `asyncio.Lock`
+- P0-P4 已完成（数据抓取 130 篇 → 摘要/向量化 → 事件去重 114 个 → 5W1H 互证）。
+- P5 RAG 已完成且主要漏洞已修（拒答判定、SSE 格式、引用校验、乱码）。
+- P6 评测已完成：48/50 条 RAG gold 已标，`data/rag_eval_summary.json` 和 `data/rag_ablation_results.json` 已产出。
+- P7 Vue 前端已完成：onboarding / 事件流 / RAG 对话三页可跑，`npm run build` 通过。
+- **当前在途任务**：论文图表、答辩 PPT、测试覆盖率、性能基准。
 
-### 第二步：跑 P6 评测
+### 第一步：确认环境还能跑通（0.5h）
 
-1. 写 `scripts/build_rag_gold.py` 生成 50 条问题模板
-2. 人工标 gold 事件集
-3. 写 `scripts/run_rag_eval.py` 跑 recall@5 + faithfulness + 拒答率
-4. 写 5 行消融 baseline 跑 5 次
-5. 填消融对比表
+```bash
+cd /home/lxxx/bishe
+.venv/bin/python -m pytest tests/ -q
+curl -s http://localhost:8000/api/health
+```
 
-### 第三步：P7 Vue 前端
+如果后端没起：
+```bash
+.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
-1. `npm create vite@latest frontend -- --template vue`
-2. 三个页面：onboarding / 事件流 / RAG 对话
-3. SSE 用 EventSource
-4. 后端加 CORS
+前端 dev server（需要时再起）：
+```bash
+cd frontend/vue-app
+npm run dev
+```
+
+### 第二步：论文图表与表格（优先做）
+
+1. 生成/补全 4 张图（Mermaid 或 draw.io），放进 `docs/diagrams/`：
+   - 四层架构图
+   - E-R 图
+   - 数据流图
+   - 三段管道流程图
+2. 整理 3 张表：
+   - 去重阈值 P/R/F1 表（用 `scripts/tune_dedup_threshold.py` 出数据）
+   - RAG 消融表（从 `data/rag_ablation_results.json`）
+   - RAG 评测指标表（从 `data/rag_eval_summary.json`）
+
+### 第三步：答辩 PPT
+
+按“背景 → 架构 → 关键技术 → 评测 → 演示截图 → 总结”做 10-15 页。截图来源：
+- Swagger UI `http://localhost:8000/docs`
+- 前端事件流 `http://localhost:5173/events`
+- 前端 RAG 对话 `http://localhost:5173/chat`
+
+### 第四步：测试与性能基准（有时间再做）
+
+- 补单元测试（见第七节优先级 2）。
+- 写/跑 `scripts/benchmark.py` 出性能表。
 
 ### 不要做的事
 
 - **不要推翻 grilling 决策**（除非你有非常充分的理由 + 在新 ADR 里记录）
-- **不要用 AI 标 ground truth**（Q7 反循环论证红线）
+- **不要用 AI 标 ground truth**（Q7 反循环论证红线；已标的 48/50 条是人类标的）
 - **不要加个性化推荐**（Q9 已钉死不做）
-- **不要加立场对比**（Q4 已降级为事实互证）
-- **不要改 DEDUP_THRESHOLD 0.90**（Q7 调参集已验证，100 对标注在 `data/dedup_gold.csv`）
+- **不要加立场对比**（Q4 已降级，Q31 已废弃事实互证）
+- **不要改 DEDUP_THRESHOLD 0.90**（Q7 调参集已验证）
 - **不要删 `summary_source`/`summary_model`/`summary_tokens` 列**（Q22/Q25 行级记录是评测可复现护甲）
 - **不要 commit `.env`**（含 API key，已 gitignored）
+- **不要改 Vue 前端核心逻辑**（当前 SSE 解析和引用弹窗已正常工作）
 
 ---
 
@@ -991,10 +967,15 @@ cc55aeb P0: scaffold + ORM v5 (7 tables, pgvector, ingest modules)
 | POST | `/api/p2/run` | P2 摘要 + 向量化 |
 | POST | `/api/p3/run` | P3 事件去重 |
 | POST | `/api/p4/run` | P4 5W1H + 互证 + 重 embed |
+| GET | `/api/events` | 事件流列表（支持 category/limit/offset/search/order/sort） |
+| GET | `/api/events/{event_id}` | 单事件详情（含 reports） |
+| GET | `/api/digest` | Q34 每日简报（date/days 参数，多源优先 Top-10） |
+| GET | `/feed/events.rss` | Q35 RSS 2.0 事件流（days/category 参数） |
 | POST | `/api/rag/ask` | P5 RAG SSE 流式问答 |
 | GET | `/api/reports` | 列出报道（支持 source/limit/offset） |
 | GET | `/api/reports/{id}` | 单篇报道全文 |
 | GET | `/api/reports/stats/summary` | 数据总览 |
+| POST | `/api/user/profile` | 保存/更新用户兴趣标签 |
 
 Swagger UI: http://localhost:8000/docs
 

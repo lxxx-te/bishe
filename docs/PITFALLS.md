@@ -268,6 +268,88 @@ cap 在 6 防止 GIN 索引失效。重跑后 `#74`事件 keywords 从首篇 3 �
 
 ---
 
+## 坑 27 / RAG 拒答判定写死 `refusal: false`
+
+**位置**：`app/services/rag/answer.py`（P5 初版）。
+**现象**：LLM 真说"信息不足"时，`done` 事件仍标 `refusal: false`，P6 评测的拒答率指标起点崩。
+**解法**：流式过程中累积 `full_text`，结尾用 `"信息不足" in full_text` 真实判定；`done` 事件输出真实布尔值。
+
+## 坑 28 / SSE `meta` 事件不是合法 JSON
+
+**位置**：`app/services/rag/answer.py`（P5 初版）。
+**现象**：`yield f"event: meta\ndata: {event_ids}\n\n"` 把 Python list repr 直接当 JSON 写，前端解析失败。
+**解法**：`json.dumps({'event_ids': event_ids})` 后输出。
+
+## 坑 29 / "开始生成…"预通知在拒答时撒谎
+
+**位置**：`app/services/rag/answer.py`（P5 初版）。
+**现象**：每次先推"检索到 N 个候选事件，开始生成…"，随后 LLM 输出"信息不足"，用户感觉系统答了一半又拒答。
+**解法**：直接删除该预通知，让 LLM 第一句直接流式出来。
+
+## 坑 30 / 异常分支 `done` 仍标 `refusal: false`
+
+**位置**：`app/services/rag/answer.py` 的 `except Exception`。
+**现象**：LLM 调用失败时输出"[RAG 生成失败: ...]"但 `done` 事件仍 `refusal: false`，前端当作成功答案。
+**解法**：异常分支 `done` 加 `{"refusal": true, "error": true}`。
+
+## 坑 31 / `[事件#N]` 引用不解析不校验
+
+**位置**：`app/services/rag/answer.py`（P5 初版）。
+**现象**：LLM 可能编造 `[事件#999]`，代码不校验该 id 是否在召回 Top-5 内， citation 准确率指标拿不到。
+**解法**：流末用 `re.findall(r'\[事件#(\d+)\]', full_text)` 提取；校验每个 id 在 `event_ids` 内；`done` 加 `citations` + `citations_valid`。
+
+## 坑 32 / `dailylimit.py` 文件计数器并发 race
+
+**位置**：`app/services/rag/dailylimit.py`。
+**现象**：`get_today_count()` + `increment_today()` 是读-改-写，并发请求会丢增量。
+**解法**：加 `asyncio.Lock`，封装 `increment_today_async(n)`，调用方改为 `await increment_today_async(1)`。
+
+## 坑 33 / `label_rag_gold.py` 跨 event loop 崩溃
+
+**位置**：`scripts/label_rag_gold.py` 初版。
+**现象**：每道 broad 题在交互循环里单独 `asyncio.run()` 查库，SQLAlchemy AsyncSession 对象跨 loop 复用触发 `RuntimeError: attached to a different loop`。
+**解法**：把候选事件和 source event 详情在脚本启动时一次性预加载到内存；交互循环只读内存数据，不再访问 DB。
+
+## 坑 34 / RAGAS faithfulness 输出 NaN 导致汇总为 null
+
+**位置**：`scripts/run_rag_eval.py` 初版。
+**现象**：RAGAS 对中文答案常报 `No statements were generated`，返回 `NaN`；`faithfulnesses` 列表因过滤条件只删 `None` 未删 `NaN`，`sum()` 后仍是 NaN，汇总 `avg_faithfulness` 写成 `null`。
+**解法**：汇总前对每条 faithfulness 调用 `_safe_float()` 把 NaN 洗成 None，再过滤求平均。
+
+## 坑 35 / gold 集标注量不足导致消融不可信
+
+**现象**：50 条 gold 只标了 9 条时跑消融，recall@5 仅 0.095，faithfulness 波动极大，结论不可靠。
+**根因**：评估指标分母是 gold 标注数量，空 gold 等价于"该问题无答案"，把大量有效查询变成 0 分。
+**解法**：补齐标注到 48/50；重跑 eval + ablation；结果 recall@5 从 0.095 升到 0.452，拒答准确率 0.958，指标可信。
+
+## 坑 36 / broad 题 gold 标注难 + 候选≠ground truth
+
+**现象**："最近有哪些文化活动？"这类 broad 题需要标全相关事件，但人类很难知道库里所有相关事件，容易漏标。
+**解法**：
+- 脚本只把候选事件当**建议**，不是标准答案；
+- 评估时采用 set recall@5，允许 Top-5 命中 gold 子集即可；
+- 论文里诚实写"broad query 的 gold 由人工在候选集基础上扩展，可能存在遗漏，set recall 对此有容忍"。
+
+## 坑 37 / `UserProfile` 模型缺失导致 onboarding 接口崩溃
+
+**现象**：P7 写 onboarding 页面时发现 `app.models` 没有 `UserProfile` 类，但 `app/api/rag.py` 和 `__init__.py` 已引用它，启动后端时本应 `ImportError`。
+**根因**： grilling 阶段规划了 user_profile 表，但 ORM 模型漏写，属于 P0 schema 闭环遗漏。
+**解法**：在 `app/models/models.py` 补 `UserProfile` 表；补 `app/api/user.py` 提供 `POST /api/user/profile`。
+
+## 坑 38 / 前端 build 报 `API_BASE is not exported`
+
+**现象**：`npm run build` 失败，`RagChatView.vue` 直接 import `API_BASE` 但 `api.js` 没 export。
+**根因**：开发期习惯用默认私有变量，生产构建 rollup 严格检查 named export。
+**解法**：`export const API_BASE = ...`。
+
+## 坑 39 / `uvicorn` 后台任务被 timeout 杀掉
+
+**现象**：用 `run_in_background=true` 启动 uvicorn 后几分钟收到 `timed_out` 通知。
+**根因**：Bash 后台任务默认 600s 超时；uvicorn 是长期服务。
+**解法**：`disable_timeout=true` 启动，或在答辩演示时用 `npm run preview` + 手动 `uvicorn`。
+
+---
+
 ## 经验提炼（论文"工程难点"一节素材）
 
 1. **首次部署 pgvector 步骤被低估**——apt 不可直装、SSL 证书坑、编译需 postgresql-server-dev-all 头文件、CREATE EXTENSION 权限隔离，完整跑通 4 个独立子坑。

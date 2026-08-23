@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>第 1 课 · 项目地图：五层架构与一条数据流</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+  <div class="page">
+    <p class="eyebrow">Lesson 01</p>
+    <h1>项目地图：五层架构与一条数据流</h1>
+    <p class="lead">毕设系统的全貌其实就五层。今天的目标：以后被问到"这系统怎么工作的"，你 30 秒讲完，还能指出每一层的文件。</p>
+
+    <div class="goal">
+      <b>本课目标：</b>拿到任何文件路径，能说出它属于哪一层、干什么；能讲出一条数据从 RSS 到前端的完整旅程。
+    </div>
+
+    <h2>一句话版本（答辩口径）</h2>
+    <p>
+      这个系统从多家媒体抓取新闻（<b>采集</b>），把讲同一件事的报道按语义聚合成"事件"（<b>处理</b>），
+      在事件级做向量检索 + 重排（<b>检索</b>），再以每日简报、RSS、可溯源问答三种方式（<b>输出</b>）
+      呈现给用户（<b>前端</b>）。
+    </p>
+
+    <h2>五层架构（点开每层看文件）</h2>
+
+    <details class="layer">
+      <summary>① 采集层 — 定时从 RSS 源拉取报道</summary>
+      <div class="body">
+        <p>数据从哪来：<code>configs/feeds.yaml</code> 定义了 4 个源（人民网、中国新闻网、澎湃新闻、澎湃热榜），澎湃经本地 RSSHub（Docker 容器 :1200）转发。</p>
+        <div class="file-line"><code>app/services/ingest/</code><span>RSS 拉取、解析、入库的核心实现</span></div>
+        <div class="file-line"><code>app/api/ingest.py</code><span>对外触发入口 <code>POST /api/ingest/run</code>（按源逐条抓）</span></div>
+        <p><b>产物：</b>新闻原文 + 摘要进数据库 <code>news_report</code> 表。</p>
+      </div>
+    </details>
+
+    <details class="layer">
+      <summary>② 处理层 — 解析、去重、聚合成事件</summary>
+      <div class="body">
+        <p>这是系统的核心价值：同一件事多家报道，合成一个"事件"。</p>
+        <div class="file-line"><code>app/services/p2.py</code><span>解析正文、提取关键词/分类（调用 LLM）</span></div>
+        <div class="file-line"><code>app/services/dedup.py</code><span>P1 按 URL 去重 + P3 向量相似度去重（阈值 ≤0.90）</span></div>
+        <div class="file-line"><code>app/services/summarize.py</code><span>多篇报道摘要 → 合并成一个事件摘要</span></div>
+        <div class="file-line"><code>app/api/p3.py</code><span>挂载（Attach）到已有事件，或新建事件（Spawn）</span></div>
+        <div class="file-line"><code>app/services/keywords.py</code><span>事件关键词抽取</span></div>
+        <p><b>产物：</b>事件进 <code>news_event</code> 表；每篇报道用 <code>event_id</code> 指向归属事件（1 事件 : N 报道）。</p>
+      </div>
+    </details>
+
+    <details class="layer">
+      <summary>③ 检索层 — 向量召回 + 重排 + 受约束生成</summary>
+      <div class="body">
+        <p>用户问问题 → 找到相关事件 → 让 LLM 只凭这些事件回答。</p>
+        <div class="file-line"><code>app/api/rag.py</code><span>问答接口 <code>POST /api/rag/ask</code>（SSE 流式返回）</span></div>
+        <div class="file-line"><code>app/services/rag/</code><span>时间预过滤 → pgvector Top-20 → bge-reranker 重排 Top-5 → LLM 生成</span></div>
+        <div class="file-line"><code>app/services/embed.py</code><span>文本 → 向量（事件级 embedding）</span></div>
+        <div class="file-line"><code>app/api/p4.py</code><span>评测/管线跑批入口</span></div>
+        <p><b>关键机制：</b>受约束生成——prompt 要求"只能用 context，否则说信息不足（拒答）"，每句答案强制带 <code>[事件#id]</code> 引用。</p>
+      </div>
+    </details>
+
+    <details class="layer">
+      <summary>④ 输出层 — 简报 / RSS / 问答</summary>
+      <div class="body">
+        <p>三种产品形态，全部复用事件级 <code>merged_summary</code>，零额外 LLM 调用。</p>
+        <div class="file-line"><code>app/api/digest.py</code><span>每日简报 <code>GET /api/digest?date=</code>（多源优先 Top-10）</span></div>
+        <div class="file-line"><code>app/api/feed.py</code><span>RSS 2.0 订阅 <code>GET /feed/events.rss</code>（每天一条 = 一个事件）</span></div>
+        <div class="file-line"><code>app/api/events.py</code><span>事件列表/详情（前端数据源）</span></div>
+      </div>
+    </details>
+
+    <details class="layer">
+      <summary>⑤ 前端层 — Vue 3 四个页面</summary>
+      <div class="body">
+        <div class="file-line"><code>frontend/vue-app/src/views/OnboardingView.vue</code><span>兴趣选择（3 个标签，存 localStorage）</span></div>
+        <div class="file-line"><code>frontend/vue-app/src/views/EventStreamView.vue</code><span>事件流（搜索/排序/分类过滤）+ <code>EventCard.vue</code></span></div>
+        <div class="file-line"><code>frontend/vue-app/src/views/DigestView.vue</code><span>每日简报页（日期/天数选择 + RSS 订阅链接）</span></div>
+        <div class="file-line"><code>frontend/vue-app/src/views/RagChatView.vue</code><span>问答页（SSE 流式气泡，事件引用可点击看详情）</span></div>
+        <div class="file-line"><code>frontend/vue-app/src/api.js</code><span>所有后端请求封装；<code>style.css</code> 全局设计 token</span></div>
+      </div>
+    </details>
+
+    <h2>一条数据的完整旅程</h2>
+    <pre><code>澎湃新闻 RSS ──→ RSSHub(:1200) ──→ feeds.yaml 配置源
+        │
+        ▼
+POST /api/ingest/run ──→ news_report 表（原文+摘要）   [采集]
+        │
+        ▼
+P2 解析/分类 ──→ P3 相似度去重 ──→ Attach / Spawn     [处理]
+        │                        │
+        │               news_event 表（合并摘要+关键词+embedding）
+        ▼
+RAG 问答 / 每日简报 / RSS 输出                       [检索+输出]
+        │
+        ▼
+Vue 页面：问答气泡 / 简报卡片 / 事件流               [前端]</code></pre>
+
+    <h2>检验：你能分对层吗</h2>
+
+    <div class="quiz" id="q1">
+      <p>Q1. <code>app/services/dedup.py</code> 属于哪一层？</p>
+      <div class="options">
+        <button class="opt" data-a="0">采集层</button>
+        <button class="opt" data-a="1">处理层</button>
+        <button class="opt" data-a="0">检索层</button>
+        <button class="opt" data-a="0">输出层</button>
+      </div>
+      <div class="feedback"></div>
+    </div>
+
+    <div class="quiz" id="q2">
+      <p>Q2. 用户问题 → 答案，中间哪一层负责"从 176 个事件里挑出相关的那几个"？</p>
+      <div class="options">
+        <button class="opt" data-a="0">处理层（P2/P3）</button>
+        <button class="opt" data-a="1">检索层（rag/ + embed.py）</button>
+        <button class="opt" data-a="0">输出层（digest.py）</button>
+        <button class="opt" data-a="0">前端（api.js）</button>
+      </div>
+      <div class="feedback"></div>
+    </div>
+
+    <div class="quiz" id="q3">
+      <p>Q3. 一份澎湃报道和第 132 号事件"是同一件事"，这由哪两层协作完成？</p>
+      <div class="options">
+        <button class="opt" data-a="0">采集 + 输出</button>
+        <button class="opt" data-a="1">处理（去重/挂载）+ 检索（向量相似度）</button>
+        <button class="opt" data-a="0">前端 + 采集</button>
+        <button class="opt" data-a="0">输出 + 检索</button>
+      </div>
+      <div class="feedback"></div>
+    </div>
+
+    <div class="resource">
+      <strong>主资源（必读）：</strong><a href="../README.md">项目 README.md</a> —— 答辩文档，
+      其中的"5 层架构"图与本节完全对应。读的时候逐层核对上面每层的文件，能指到源码即掌握。
+    </div>
+
+    <div class="followup">
+      完成本课后你可以问：某一层的内部细节（比如"P3 的阈值 0.90 是怎么定的？"）、
+      或者想深入任何一层作为下一课。也欢迎指出哪层还讲得不够清楚。
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll('.quiz').forEach((quiz) => {
+      const feedback = quiz.querySelector('.feedback')
+      quiz.querySelectorAll('.opt').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          quiz.querySelectorAll('.opt').forEach((b) => (b.disabled = true))
+          if (btn.dataset.a === '1') {
+            btn.classList.add('correct')
+            feedback.textContent = '✓ 正确。'
+          } else {
+            btn.classList.add('wrong')
+            const correct = quiz.querySelector('.opt[data-a="1"]')
+            correct.classList.add('correct')
+            feedback.textContent = '✗ 再想想——看看上面对应的层再点一次选项。'
+          }
+        })
+      })
+    })
+  </script>
+</body>
+</html>

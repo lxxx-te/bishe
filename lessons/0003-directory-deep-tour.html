@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bishe 项目目录深度导览</title>
+<style>
+  :root {
+    --ink: #1e3a5f; --ink-strong: #14263d; --muted: #5a6b7d; --faint: #8a97a5;
+    --surface: #ffffff; --bg: #f6f4ef; --line: #e5e1d8; --line-strong: #cfc9bc;
+    --accent: #b45309; --accent-bg: #fdf3e7; --green: #166534; --green-bg: #f0f7f1;
+    --serif: "Noto Serif SC", "Source Han Serif SC", "STZhongsong", serif;
+    --sans: "Noto Sans SC", "Microsoft YaHei", -apple-system, sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); font-size: 15px; line-height: 1.75;
+  }
+  .page { max-width: 880px; margin: 0 auto; padding: 48px 28px 80px; }
+  header.hero { border-bottom: 3px double var(--line-strong); padding-bottom: 28px; margin-bottom: 36px; }
+  .eyebrow { font-size: 11px; letter-spacing: .3em; color: var(--faint); font-weight: 700; margin: 0 0 10px; }
+  h1 { font-family: var(--serif); font-size: clamp(1.9rem, 4.5vw, 2.7rem); margin: 0 0 12px; color: var(--ink-strong); line-height: 1.2; }
+  .hero p.lede { color: var(--muted); font-size: 15.5px; margin: 0; max-width: 640px; }
+  h2 { font-family: var(--serif); font-size: 1.45rem; color: var(--ink-strong); margin: 56px 0 6px; display: flex; align-items: baseline; gap: 12px; }
+  h2 .path { font-family: var(--mono); font-size: .95rem; color: var(--accent); font-weight: 600; }
+  h2 + .oneline { color: var(--muted); margin: 0 0 18px; font-size: 14.5px; }
+  h3 { font-size: 1.02rem; color: var(--ink-strong); margin: 26px 0 8px; }
+  p { margin: 10px 0; }
+  code { font-family: var(--mono); font-size: .86em; background: #ede9df; padding: 2px 6px; border-radius: 4px; color: #7c3a0d; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 22px 26px; margin: 16px 0; box-shadow: 0 1px 3px rgba(20,38,61,.05); }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; background: var(--surface); }
+  th { text-align: left; font-size: 12px; letter-spacing: .08em; color: var(--faint); border-bottom: 2px solid var(--line-strong); padding: 8px 10px; }
+  td { border-bottom: 1px solid var(--line); padding: 9px 10px; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.f { font-family: var(--mono); font-size: .84rem; white-space: nowrap; color: var(--ink-strong); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 99px; margin-right: 6px; vertical-align: 1px; }
+  .t-p1 { background: #e8f0fe; color: #1d4ed8; } .t-p2 { background: #f3e8fd; color: #7e22ce; }
+  .t-p3 { background: #fde8e8; color: #b91c1c; } .t-p4 { background: #fef9e8; color: #a16207; }
+  .t-out { background: #e8f7ee; color: #166534; } .t-rag { background: #e8f7f7; color: #0f766e; }
+  .t-legacy { background: #ececec; color: #888; text-decoration: line-through; }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-bg); padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 18px 0; font-size: 14.5px; }
+  .callout.green { border-color: var(--green); background: var(--green-bg); }
+  .callout b { color: var(--ink-strong); }
+  .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 18px 0; font-size: 13px; }
+  .flow .step { background: var(--ink-strong); color: #fff; padding: 6px 12px; border-radius: 6px; font-weight: 600; }
+  .flow .step small { display: block; font-weight: 400; opacity: .75; font-size: 11px; }
+  .flow .arr { color: var(--faint); font-size: 16px; }
+  .tree { font-family: var(--mono); font-size: 13px; line-height: 1.9; background: #fbfaf7; border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; overflow-x: auto; }
+  .tree .c { color: var(--faint); }
+  .tree .hl { color: var(--accent); font-weight: 700; }
+  .num { font-family: var(--serif); font-size: 1.1rem; color: var(--accent); font-weight: 700; }
+  footer { margin-top: 64px; border-top: 1px solid var(--line-strong); padding-top: 20px; color: var(--faint); font-size: 13px; }
+  @media print { body { background: #fff; } .card { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero">
+  <p class="eyebrow">BISHE · PROJECT TOUR · 第 3 课</p>
+  <h1>你的毕设仓库，每个文件夹在干什么</h1>
+  <p class="lede">目标对齐 MISSION：答辩时被问「这个目录/模块是干什么的」，你能指着任何文件立即讲清职责。本文按「系统本体 → 证据链 → 文档弹药 → 教学区」四块讲，每个文件名都是真的，数字都可复核。</p>
+</header>
+
+<!-- ============ 全景 ============ -->
+<h2>〇、先看全景<span class="path">~/bishe</span></h2>
+<p class="oneline">一句话定位：多源新闻事件的向量聚合与检索系统。FastAPI + PostgreSQL/pgvector + BGE(CPU) + DeepSeek + Vue3。</p>
+
+<div class="flow">
+  <span class="step">采集<small>rss/newsapi</small></span><span class="arr">→</span>
+  <span class="step">处理<small>摘要·向量·关键词</small></span><span class="arr">→</span>
+  <span class="step">聚合<small>去重 spawn/attach</small></span><span class="arr">→</span>
+  <span class="step">检索<small>预过滤·ANN·重排</small></span><span class="arr">→</span>
+  <span class="step">生成<small>受约束+SSE</small></span><span class="arr">→</span>
+  <span class="step">输出<small>API/简报/RSS/前端</small></span>
+</div>
+
+<div class="tree">
+~/bishe/
+├── <span class="hl">app/</span>            后端本体（五层管道的 Python 实现）
+├── <span class="hl">frontend/</span>       Vue3 前端
+├── <span class="hl">scripts/</span>        评测证据链工厂（7 个脚本）
+├── <span class="hl">data/</span>           冻结的评测资产（gold + 结果 JSON）
+├── <span class="hl">docs/</span>           文档弹药库（HANDOFF/PITFALLS/thesis 五件套）
+├── <span class="hl">tests/</span>          pytest 单测（10 个）
+├── <span class="hl">configs/</span>        RSS 源清单 feeds.yaml
+├── <span class="hl">lessons/ learning-records/ assets/</span> + MISSION/NOTES/RESOURCES   教学工作区
+└── CONTEXT.md · README.md · .env · requirements.txt                根文件
+</div>
+
+<div class="callout"><b>记忆钩子：</b><span class="num">app+frontend</span> 是「系统」，<span class="num">scripts+data</span> 是「证据」，<span class="num">docs</span> 是「弹药」，<span class="num">lessons 系列</span> 是「你的私教课现场」。答辩四问——系统怎么跑？结论怎么来？设计为什么？你学到了什么？——各对应一块。</div>
+
+<!-- ============ app/ ============ -->
+<h2>一、后端本体<span class="path">app/</span></h2>
+<p class="oneline">五层管道全部住在这里。入口 main.py 挂载所有路由；core/config.py 是唯一配置中心（读 .env）。</p>
+
+<h3>api/ — 路由层（HTTP 门面）</h3>
+<table>
+  <tr><th>文件</th><th>职责</th><th>答辩要点</th></tr>
+  <tr><td class="f">health.py</td><td>存活检查 /api/health</td><td>演示前 ping 它确认后端活着</td></tr>
+  <tr><td class="f">ingest.py</td><td><span class="tag t-p1">P1</span>触发采集入库</td><td>演示日早晨重采就是调它</td></tr>
+  <tr><td class="f">p2.py</td><td><span class="tag t-p2">P2</span>处理编排（摘要/向量/关键词）</td><td>调用 services 三个工人</td></tr>
+  <tr><td class="f">p3.py</td><td><span class="tag t-p3">P3</span>聚合编排（去重 spawn/attach）</td><td>事件诞生的地方</td></tr>
+  <tr><td class="f">p4.py</td><td><span class="tag t-p4">P4</span>合并摘要（多源事件 LLM 合并）</td><td>merged_summary 只在 ≥2 源事件上跑，省 LLM 钱</td></tr>
+  <tr><td class="f">events.py</td><td>事件列表/详情 API</td><td>排序键 = <b>多源度</b> COUNT(DISTINCT source_site)，字段叫 source_breadth</td></tr>
+  <tr><td class="f">digest.py</td><td>每日简报 /api/digest</td><td>按多源度降序取 Top-10，复用 merged_summary 零新增 LLM</td></tr>
+  <tr><td class="f">feed.py</td><td><span class="tag t-out">输出</span>RSS 事件流 /feed/events.rss</td><td>每条 = 一个事件，链接指向首篇原文</td></tr>
+  <tr><td class="f">rag.py</td><td><span class="tag t-rag">RAG</span>问答 /api/rag/ask（SSE 流式）</td><td>请求体字段是 <code>query</code> 不是 question</td></tr>
+  <tr><td class="f">reports.py · user.py</td><td>报道列表 · 用户兴趣标签（仅显式勾选）</td><td>不做行为画像是隐私设计决策</td></tr>
+</table>
+
+<h3>services/ — 干活的工人</h3>
+<table>
+  <tr><th>文件</th><th>职责</th><th>关键细节</th></tr>
+  <tr><td class="f">ingest/rss.py</td><td>拉 RSS/解析 description</td><td>没有全文抓取器——raw_text 就来自 RSS 摘要</td></tr>
+  <tr><td class="f">ingest/persist.py</td><td><b>准入闸门</b> has_complete_text()</td><td>残句/纯标题/纯署名拒收；去尾引号后必须停在 。！？… 上。8月新增，防幻影事件</td></tr>
+  <tr><td class="f">summarize.py</td><td>LLM 摘要 + 电头剥离</td><td>剥「中新网X月X日电 题：」；LLM 失败降级 fallback（现仅 7 条且完整）</td></tr>
+  <tr><td class="f">embed.py</td><td>BGE-small-zh 向量化（CPU）</td><td>报道级 + 事件级（重挂载后异步重算中心）</td></tr>
+  <tr><td class="f">keywords.py</td><td>N-gram 关键词提取</td><td>闸门匹配的弹药，GIN 索引加速</td></tr>
+  <tr><td class="f">dedup.py</td><td><span class="tag t-p3">P3</span>核心：关键词闸门 + 向量 ANN</td><td>阈值 0.90 从 settings 读（刚修的死配置）；重叠→attach，否则→spawn</td></tr>
+  <tr><td class="f">p4.py</td><td>多源事件 LLM 合并摘要</td><td>动机：首篇措辞不能偏置事件表示</td></tr>
+  <tr><td class="f">rag/retrieval.py</td><td>三段检索前两段</td><td>时间预过滤 → pgvector ANN Top-20 → bge-reranker Top-5</td></tr>
+  <tr><td class="f">rag/answer.py</td><td>受约束生成 + 强制 [事件#X] 引用</td><td>幻觉防线的最后一道；SSE 逐 token 推给前端</td></tr>
+  <tr><td class="f">rag/dailylimit.py</td><td>DeepSeek 每日限额计数</td><td>对应 data/rag_daily_counter.json</td></tr>
+  <tr><td class="f" style="text-decoration:line-through">fact_extract.py</td><td><span class="tag t-legacy">legacy</span>5W1H 抽取</td><td>已移出主链路（faithfulness 0.978→0.941 的代价换来简洁），代码保留作移除记录</td></tr>
+</table>
+
+<h3>其余</h3>
+<p><code>models/models.py</code> 就两张表：<b>news_report</b>（每篇报道一行，含 embedding）和 <b>news_event</b>（聚合事件，含 merged_summary / keywords / embedding，HNSW+GIN+三列 btree 索引）。<code>db/init_schema.py</code> 建表，<code>db/session.py</code> 给 asyncio session。<code>eval/</code> 目前是空的（评测逻辑都住在 scripts/）。<code>core/config.py</code> 用 pydantic-settings 读 .env——dedup 阈值等所有魔法数字的合法居所。</p>
+
+<div class="callout green"><b>一条数据的完整流向（答辩高频题）：</b>feeds.yaml 定义源 → rss.py 拉取 → persist.py 过闸门 → summarize+embed+keywords 三件套加工 → dedup.py 决定 spawn 新事件还是 attach 进旧事件 → p4 给多源事件合并摘要 → events/digest/feed 三个出口 → 前端卡片。RAG 线：用户问题 → retrieval 三段 → answer 约束生成 → SSE 流回 RagChatView。</div>
+
+<!-- ============ frontend ============ -->
+<h2>二、前端<span class="path">frontend/vue-app</span></h2>
+<p class="oneline">Vue3 + Vite，四个页面 + 一个卡片组件，dev 端口 5173。</p>
+<table>
+  <tr><th>文件</th><th>页面</th><th>要点</th></tr>
+  <tr><td class="f">views/EventStreamView.vue</td><td>事件流</td><td>默认按<b>多源度</b>排序（下拉框文案已改），支持搜索/分类过滤</td></tr>
+  <tr><td class="f">views/DigestView.vue</td><td>每日简报</td><td>?date=&days= 查询；卡片显示「N 家媒体报道」</td></tr>
+  <tr><td class="f">views/RagChatView.vue</td><td>RAG 问答</td><td>消费 SSE 流；渲染 [事件#X] 引用为可点溯源链接</td></tr>
+  <tr><td class="f">views/OnboardingView.vue</td><td>首次兴趣勾选</td><td>2–3 个标签，仅显式画像</td></tr>
+  <tr><td class="f">components/EventCard.vue</td><td>事件卡片</td><td>全站复用；class 名 event-breadth</td></tr>
+</table>
+
+<!-- ============ scripts ============ -->
+<h2>三、评测证据链工厂<span class="path">scripts/</span></h2>
+<p class="oneline">论文里每个数字都从这里产出。命名成对：build_* 造 gold，label_* 辅助标注，run_* 出结果。</p>
+<table>
+  <tr><th>脚本</th><th>产出</th><th>答辩要点</th></tr>
+  <tr><td class="f">run_rag_eval.py</td><td>rag_eval_results.json + summary</td><td>48 行评测；refusal 口径两种（正文报 1.000=16/16）</td></tr>
+  <tr><td class="f">run_ablation.py</td><td>5 配置消融表</td><td>0.353→0.452，证明每段有贡献；只动时间过滤/重排/约束生成三开关</td></tr>
+  <tr><td class="f">tune_dedup_threshold.py</td><td>阈值-PRF1 曲线数据</td><td><b>完全离线</b>：只读仓库里的 dedup_gold.csv，不连数据库，可当场重放</td></tr>
+  <tr><td class="f">build_rag_gold.py / label_rag_gold.py</td><td>构造+标注检索 gold</td><td>50 行 37 独立题（13 组重复对，论文已披露）</td></tr>
+  <tr><td class="f">build_dedup_gold.py / label_dedup_gold.py</td><td>构造+标注去重 gold</td><td>n=100，CI 约 ±5%</td></tr>
+</table>
+
+<!-- ============ data ============ -->
+<h2>四、冻结的评测资产<span class="path">data/</span></h2>
+<p class="oneline">「不改数据不重跑」裁决的物理载体：评测数字 = 这些文件的快照，配套数据库快照 news_aggregator_eval。</p>
+<table>
+  <tr><th>文件</th><th>是什么</th><th>注意</th></tr>
+  <tr><td class="f">rag_gold.csv</td><td>检索评测 gold（50行）</td><td>含 13 组完全重复题对——不是 bug 是标注工具产物，已如实写进论文</td></tr>
+  <tr><td class="f">dedup_gold.csv</td><td>去重评测 gold（n=100）</td><td>tune 脚本的唯一输入，仓库自带=可复现</td></tr>
+  <tr><td class="f">rag_eval_results.json</td><td>48 行逐题结果（现行）</td><td>faithfulness 0.941</td></tr>
+  <tr><td class="f">rag_eval_results_v1_5w1h.json</td><td><b>5W1H 移除前</b>的对照</td><td>faithfulness 0.978——04 文件取舍表的原始证据</td></tr>
+  <tr><td class="f">rag_ablation_results.json / .csv</td><td>消融 5 行</td><td>0.353→0.452</td></tr>
+  <tr><td class="f">rag_daily_counter.json</td><td>DeepSeek 当日用量</td><td>演示前查限额</td></tr>
+</table>
+<div class="callout"><b>主库 ≠ 评测库：</b>主库 news_aggregator 已清理为 187 报道/166 事件（准入闸门上线后），评测数字基于旧快照 200/176。若重跑评测必须连快照 news_aggregator_eval，02 文件已声明此口径。</div>
+
+<!-- ============ docs ============ -->
+<h2>五、文档弹药库<span class="path">docs/</span></h2>
+<table>
+  <tr><th>文件</th><th>是什么</th><th>何时翻</th></tr>
+  <tr><td class="f">HANDOFF.md</td><td>架构决策问答集（Q1–Q34）+ schema + 索引设计</td><td>被问「为什么这样设计」先翻这里</td></tr>
+  <tr><td class="f">PITFALLS.md</td><td>踩坑史（含关键词闸门漏 attach、hotness 死列等）</td><td>答辩讲「迭代过程」的素材；也是历史记录不改写</td></tr>
+  <tr><td class="f">PLAN.md · SETUP.md</td><td>总规划 · 环境搭建</td><td>新机器复现用</td></tr>
+  <tr><td class="f">thesis/01–05</td><td>论文五件套：目标声明 / 分层评测 / 阈值防御 / 5W1H移除 / 演示checklist</td><td>写作直接抄；05 是答辩前一天的行动清单</td></tr>
+</table>
+
+<!-- ============ tests/configs ============ -->
+<h2>六、测试与配置<span class="path">tests/ · configs/</span></h2>
+<p><code>tests/</code> 三个文件共 10 个用例：test_health（存活）、test_ingest（<b>准入闸门</b>：完整句放行、残句拒收、URL 去重、空文本拒收）、test_rag（检索管道装配）。跑法：<code>.venv/bin/python -m pytest</code>。注意 venv 必须用项目内的 <code>~/bishe/.venv/bin/python</code>，系统 python3 缺 pydantic_settings。</p>
+<p><code>configs/feeds.yaml</code> 是全部 RSS/NewsAPI/RSSHub 源清单——采集层的唯一配置入口，加源改这里。</p>
+
+<!-- ============ teaching ============ -->
+<h2>七、教学工作区<span class="path">lessons/ · learning-records/ · assets/ · MISSION.md 等</span></h2>
+<p>这是 8月13日 你让我教你「看懂自己的毕设」时建立的：<code>MISSION.md</code> 记目标（答辩前能指着任何文件讲清职责）；<code>lessons/</code> 已有 0001 项目地图、0002 去重-挂载-生成事件两课；<code>learning-records/</code> 是每课的三问测验成绩；<code>assets/lesson.css</code> 是课程共用样式；<code>NOTES.md</code> 记你的学习偏好；<code>RESOURCES.md</code> 是外部资料清单。本文档就是第 3 课，已同步存一份到 lessons/0003。</p>
+
+<!-- ============ root files ============ -->
+<h2>八、根文件速查<span class="path">~/bishe/*</span></h2>
+<table>
+  <tr><th>文件</th><th>是什么</th><th>一句话</th></tr>
+  <tr><td class="f">CONTEXT.md</td><td>领域术语表</td><td>每次 grilling 钉死一个词就更新；含 _Avoid_ 反模式（热度篇数口径已废弃）</td></tr>
+  <tr><td class="f">README.md</td><td>项目门面</td><td>措辞已对齐多源度口径</td></tr>
+  <tr><td class="f">.env / .env.example</td><td>密钥与配置</td><td>含 DEEPSEEK_API_KEY，<b>永不提交、永不外泄</b>；阈值统一 0.90</td></tr>
+  <tr><td class="f">requirements.txt</td><td>Python 依赖</td><td>重建 venv 用</td></tr>
+  <tr><td class="f">.venv/ 等点开头</td><td>工具链</td><td>.git 版本库、.pytest_cache/.ruff_cache 缓存、.opencode 编辑器配置——不用管</td></tr>
+</table>
+
+<!-- ============ ammo index ============ -->
+<h2>九、答辩弹药索引<span class="path">数字 → 出处</span></h2>
+<table>
+  <tr><th>评委问</th><th>你答</th><th>证据在哪</th></tr>
+  <tr><td>检索效果多少？</td><td>全量 0.452，检索题 0.616，拒答 1.000（16/16）</td><td>data/rag_eval_summary.json + thesis/02</td></tr>
+  <tr><td>每段都有用吗？</td><td>消融 0.353→0.452，五配置</td><td>data/rag_ablation_table.csv</td></tr>
+  <tr><td>阈值换个数据集还行？</td><td>方法可迁移：离线扫 0.50–0.95 按 precision≥0.9 选点</td><td>scripts/tune_dedup_threshold.py + thesis/03</td></tr>
+  <tr><td>为什么删 5W1H？</td><td>faithfulness 0.978→0.941，检索持平，实际使用感觉非常无用</td><td>两份 eval JSON 对照 + thesis/04</td></tr>
+  <tr><td>多源怎么体现？</td><td>事件#132 三方跨源排第一；排序键=多源度非篇数</td><td>app/api/events.py + CONTEXT.md</td></tr>
+  <tr><td>幻觉怎么防？</td><td>拒答 16/16 + 引用有效率 1.000 + 受约束生成</td><td>rag/answer.py + thesis/02</td></tr>
+</table>
+
+<footer>
+  第 3 课 · bishe 目录深度导览 · 与 lessons/0003-directory-deep-tour.html 同源<br>
+  有任何一处看不懂，直接追问——这就是私教课的用法。下一课建议：亲手跑一遍「一条报道的一生」（从 feeds.yaml 到前端卡片）。
+</footer>
+
+</div>
+</body>
+</html>

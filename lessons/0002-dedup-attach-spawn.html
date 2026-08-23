@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>第 2 课 · 处理层实战：一篇报道如何变成事件</title>
+  <link rel="stylesheet" href="../assets/lesson.css">
+</head>
+<body>
+  <div class="page">
+    <p class="eyebrow">Lesson 02 · 处理层</p>
+    <h1>一篇报道如何变成「事件」</h1>
+    <p class="lead">用你系统里真实的事件 #132 讲透 P3 去重：三家不同媒体的报道，为什么能合成一个事件？</p>
+
+    <div class="goal">
+      <b>本课目标：</b>能讲清 <code>Attach</code>（挂载）和 <code>Spawn</code>（新建事件）的分叉逻辑，以及阈值 0.90 是什么。
+    </div>
+
+    <h2>真实案例：事件 #132</h2>
+    <p>系统里 <code>GET /api/events/132</code> 返回的真实数据——<b>三个来源、三篇不同标题</b>的报道，全部属于同一个事件：</p>
+    <table>
+      <tr><th>来源</th><th>标题</th></tr>
+      <tr><td>中国新闻网</td><td>“地球的红飘带”临展画作自带附文存在错误 浙江省博物馆致歉</td></tr>
+      <tr><td>澎湃新闻</td><td>马上评｜一周内两次道歉，浙江省博不该以这样的方式出圈</td></tr>
+      <tr><td>澎湃热榜</td><td>浙江省博物馆长征主题版画展出现多处文字错误，协办方致歉</td></tr>
+    </table>
+    <p>
+      三篇报道文字完全不同，但它们<b>讲的是同一件事</b>。P3 的工作就是发现这件事，并把三篇都挂到同一个事件下
+      （1 事件 : N 报道）。
+    </p>
+
+    <h2>分叉逻辑：挂载 or 新建？</h2>
+    <p>核心代码在 <code>app/services/dedup.py:112</code> 的 <code>dedup_one()</code>，逻辑只有三步：</p>
+    <pre><code>candidates = await _find_candidate_events(session, keywords)   # 1. 用关键词找候选事件
+# 2. 对每个候选事件做向量余弦相似度，取最高
+sim = _cosine(report.embedding, ev.embedding)
+
+if best_event and best_sim &gt; DEDUP_THRESHOLD:   # 3. 阈值判断
+    await _attach_to_event(session, report, best_event, keywords)  # → Attach
+    return {"action": "attach", ...}
+
+event = await _spawn_event(session, report, keywords)  # 否则 → Spawn</code></pre>
+
+    <p>关键点：</p>
+    <ul>
+      <li><b>关键词是第一道闸</b>：新报道的关键词与某事件关键词无重叠，直接跳过向量计算（省 LLM/向量调用）</li>
+      <li><b>相似度 &gt; 0.90 → Attach</b>：挂到最相似的事件下</li>
+      <li><b>≤ 0.90 → Spawn</b>：不是同一件事，新建事件，自己当首篇报道</li>
+      <li>阈值 0.90 不是拍脑袋：<code>dedup.py:26</code> 注明来自 100 对人工标注黄金集调优（precision 0.929 / recall 1.000 / F1 0.963）</li>
+    </ul>
+
+    <h2>Attach 之后发生了什么</h2>
+    <p>挂载不是简单记个 <code>event_id</code>——<code>_attach_to_event()</code>（<code>dedup.py:90-109</code>）同步做四件事：</p>
+    <table>
+      <tr><th>动作</th><th>效果</th></tr>
+      <tr><td>source_count +1</td><td>热度上涨：事件 #132 的 <code>source_count = 3</code></td></tr>
+      <tr><td>关键词并集</td><td>保留最多 6 个（GIN 索引效率）</td></tr>
+      <tr><td>事件发布时间取最小</td><td>保证事件时间是"最早报道"时间</td></tr>
+      <tr><td>后台重算摘要 + 重 embed</td><td>合并所有报道摘要，避免首篇措辞偏置事件向量中心（Q 系列决策）</td></tr>
+    </table>
+
+    <h2>检验：去重判断</h2>
+
+    <div class="quiz" id="q1">
+      <p>Q1. 新报道与某事件关键词完全无重叠，但向量相似度 0.95。会发生什么？</p>
+      <div class="options">
+        <button class="opt" data-a="0">直接 Attach（相似度 0.95 &gt; 0.90）</button>
+        <button class="opt" data-a="1">跳过向量计算，Spawn 新事件</button>
+        <button class="opt" data-a="0">报错重试</button>
+      </div>
+      <div class="feedback"></div>
+    </div>
+
+    <div class="quiz" id="q2">
+      <p>Q2. 相似度恰好 0.90 呢？</p>
+      <div class="options">
+        <button class="opt" data-a="1">Spawn（条件是 <code>&gt; 0.90</code>，等于不算）</button>
+        <button class="opt" data-a="0">Attach（0.90 正好达标）</button>
+      </div>
+      <div class="feedback"></div>
+    </div>
+
+    <div class="quiz" id="q3">
+      <p>Q3. 事件 #132 显示 <code>source_count = 3</code>，说明什么？</p>
+      <div class="options">
+        <button class="opt" data-a="1">有 3 篇报道被 Attach 到它名下</button>
+        <button class="opt" data-a="0">它被挂载过 3 次</button>
+        <button class="opt" data-a="0">它有 3 个关键词</button>
+      </div>
+      <div class="feedback"></div>
+    </div>
+
+    <div class="resource">
+      <strong>动手验证（推荐）：</strong>在终端跑
+      <code>curl -s http://localhost:8000/api/events/132 | python3 -m json.tool</code>
+      看真实的 <code>source_count</code>、<code>keywords</code>、<code>reports</code> 三个字段，和本课表格逐项核对。
+      主资源：<a href="../CONTEXT.md">CONTEXT.md</a> 的「处理动作」一节（挂载/新建事件/去重的准确定义）。
+    </div>
+
+    <div class="followup">
+      你可以问：<b>关键词是怎么抽取的？</b>（处理层最后一环）或<b>向量相似度到底怎么算的？</b>（跳去检索层）。
+      也可以提出做第 3 课的方向。有不懂的随时打断我。
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll('.quiz').forEach((quiz) => {
+      const feedback = quiz.querySelector('.feedback')
+      quiz.querySelectorAll('.opt').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          quiz.querySelectorAll('.opt').forEach((b) => (b.disabled = true))
+          if (btn.dataset.a === '1') {
+            btn.classList.add('correct')
+            feedback.textContent = '✓ 正确。'
+          } else {
+            btn.classList.add('wrong')
+            quiz.querySelector('.opt[data-a="1"]').classList.add('correct')
+            feedback.textContent = '✗ 不对——回看上面的分叉逻辑再试。'
+          }
+        })
+      })
+    })
+  </script>
+</body>
+</html>

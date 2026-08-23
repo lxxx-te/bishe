@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>第6课 · Git 演进史与测试盲区：提交记录里的答辩叙事</title>
+<style>
+  :root { --ink:#1a2332; --muted:#5a6a7e; --line:#dde4ec; --bg:#f7f8fa; --card:#ffffff;
+          --accent:#1e3a5f; --gold:#8a6d1a; --green:#1a6b3c; --red:#a12622; --code-bg:#0f1720; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+         color:var(--ink); background:var(--bg); line-height:1.75; padding-bottom:80px; }
+  .wrap { max-width:860px; margin:0 auto; padding:0 24px; }
+  header.hero { background:linear-gradient(135deg,#16283f,#1e3a5f); color:#fff; padding:56px 0 44px; margin-bottom:40px; }
+  .hero .eyebrow { letter-spacing:.3em; font-size:12px; opacity:.7; margin-bottom:10px; }
+  .hero h1 { font-size:clamp(1.8rem,4vw,2.6rem); font-weight:700; }
+  .hero p.sub { margin-top:12px; opacity:.85; max-width:640px; }
+  h2 { font-size:1.45rem; margin:52px 0 18px; padding-left:14px; border-left:4px solid var(--accent); }
+  h3 { font-size:1.08rem; margin:28px 0 10px; color:var(--accent); }
+  p { margin:10px 0; }
+  .lead { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; margin:16px 0; background:var(--card); font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top; }
+  th { background:#eef2f7; font-weight:600; white-space:nowrap; }
+  td code, p code, li code { background:#e8edf3; border-radius:4px; padding:1px 6px;
+        font-family:ui-monospace,Consolas,monospace; font-size:.86em; color:#0f3a66; }
+  pre { background:var(--code-bg); color:#dbe7f3; border-radius:8px; padding:16px 18px;
+        overflow-x:auto; font-size:.84rem; line-height:1.6; margin:14px 0;
+        font-family:ui-monospace,Consolas,monospace; }
+  pre .c { color:#7a93ad; } pre .k { color:#8fd0ff; } pre .s { color:#b5e08a; } pre .hl { color:#ffd479; }
+  .box { border-radius:8px; padding:14px 18px; margin:16px 0; font-size:.93rem; }
+  .box.why { background:#f2f7ee; border-left:4px solid var(--green); }
+  .box.warn { background:#fdf3ef; border-left:4px solid var(--red); }
+  .box.gold { background:#fbf6e8; border-left:4px solid var(--gold); }
+  .box b.tag { display:block; margin-bottom:4px; font-size:.85rem; letter-spacing:.08em; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:16px 0; }
+  @media (max-width:640px){ .cols{grid-template-columns:1fr;} }
+  .qz { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px 20px; margin:12px 0; }
+  .qz b { color:var(--accent); }
+  details { margin-top:8px; } summary { cursor:pointer; color:var(--accent); font-weight:600; }
+  details p { margin-top:8px; }
+  .footer-note { text-align:center; color:var(--muted); font-size:.85rem; margin-top:64px; }
+</style>
+</head>
+<body>
+
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">BISHE TEACH · LESSON 06</div>
+  <h1>Git 演进史与测试盲区：提交记录里的答辩叙事</h1>
+  <p class="sub">代码会说话，提交历史会讲故事。这一课把 <code>git log</code> 当考古现场：第一幕的两日冲刺怎么讲成答辩开场白，第二幕的未提交改动说明什么，测试盲区哪些该补、哪些可以坦然承认。</p>
+</div></header>
+
+<div class="wrap">
+
+<!-- ============ 1 时间线 ============ -->
+<h2>① 第一幕：两日冲刺的全景时间线</h2>
+<p class="lead">全部 17 个提交集中在 7月5–6日，两天走完 P0→P5 六个阶段。<b>这不是仓促，是可以讲成「设计先行」的证据链</b>——因为每个阶段都拆出了 v1/v2/v3。</p>
+
+<table>
+<tr><th>阶段</th><th>提交</th><th>一句话</th></tr>
+<tr><td>P0 地基</td><td><code>cc55aeb</code></td><td>scaffold + ORM v5（7 表 + pgvector）——<b>ORM 就迭代到第 5 版才动工</b></td></tr>
+<tr><td>P1 采集</td><td><code>5d49118</code></td><td>RSS 端到端，130 篇真实报道入库</td></tr>
+<tr><td>P2 处理</td><td><code>0a4cd43</code> → <code>05ef37e</code> → <code>e7d6d94</code></td><td>摘要+嵌入 → grilling 修补 → 溯源审计（v1→v3 三连）</td></tr>
+<tr><td>P3 去重</td><td><code>4c4b03b</code> → <code>8b978b4</code> → <code>4a31d26</code></td><td>关键词闸门+ANN → 挂载并集修复 → <b>阈值调优 0.75→0.90</b></td></tr>
+<tr><td>P4 聚合</td><td><code>e89141f</code> → <code>d146ee0</code></td><td>5W1H 多源合并 → 类别多数票（v2）</td></tr>
+<tr><td>P5 检索</td><td><code>791ba82</code></td><td>三段检索 + 受约束生成 + SSE 流式</td></tr>
+<tr><td>文档</td><td>4 个 <code>docs:</code> 前缀提交</td><td>与代码<b>交替提交</b>，不是事后补写</td></tr>
+</table>
+
+<div class="box why"><b class="tag">为什么这条时间线值钱</b>
+评委看到的不该是「两天糊完的系统」，而是：<i>先设计 schema 到第五版才动手 → 每个阶段先跑通再自我审查 → 发现问题就出 v2 → 文档跟着代码走</i>。这就是工程方法的现场证据。
+</div>
+
+<!-- ============ 2 金矿 ============ -->
+<h2>② 从提交信息里挖三条答辩叙事</h2>
+
+<h3>叙事一：阈值不是拍脑袋（P3 v2）</h3>
+<pre>
+<span class="c"># 4a31d26 的完整提交信息：</span>
+P3 v2: tuned threshold 0.75 -> 0.90 (precision 0.134 -> 0.929)
+</pre>
+<p>一行提交信息 = 阈值防御章节的<b>原始证据链起点</b>：初版 0.75 精度崩到 0.134（十次挂载九次错），在 100 对金标上扫描后定 0.90。<code>tune_dedup_threshold.py</code> 和 <code>data/dedup_gold.csv</code> 都在这条提交里进库——数字可离线重放的主张从这天起成立。</p>
+
+<h3>叙事二：敢于推翻自己（P4 v1→v2，以及第二幕的删除）</h3>
+<p><code>d146ee0</code> 给类别合并加上 LLM 多数票，是 v1 规则版的自我修正；而当前工作区里 <code>fact_merge.py</code> 整文件删除（-166 行）是更大胆的一次——5W1H 全线移除，理由写进了论文（faithfulness 让步换 prompt 简洁）。<b>能删掉自己写的功能，比只会加功能更成熟。</b></p>
+
+<h3>叙事三：文档与代码同权</h3>
+<p>四个 <code>docs:</code> 提交与功能提交交替出现（P1 后、P3 后、P4 后、收尾）。PITFALLS.md 里每条坑都对应一次真实踩踏——评委问「遇到最大的困难」，答案不在嘴上，在提交序列里。</p>
+
+<!-- ============ 3 第二幕 ============ -->
+<h2>③ 第二幕：工作区里还没进版本史的演化</h2>
+<p class="lead"><code>git status</code> 显示 20 个修改文件 + 一批未跟踪新文件——整个输出层和教学工作区都没提交过。这本身是一条叙事：<b>冻结快照之后系统还在活着改</b>。</p>
+
+<table>
+<tr><th>未提交内容</th><th>代表改动</th><th>性质</th></tr>
+<tr><td>输出层四端点</td><td><code>app/api/digest.py / events.py / feed.py / user.py</code> 全新</td><td>P6 新功能</td></tr>
+<tr><td>数据质量闸门</td><td><code>persist.py</code> has_complete_text 准入 + 单测</td><td>实测驱动修复（Q10）</td></tr>
+<tr><td>口径修正</td><td><code>events/digest/feed</code> 按 source_breadth 排序</td><td>领域认知升级</td></tr>
+<tr><td>显式失败</td><td><code>dedup.py</code> 关键词批失败不再静默降级</td><td>可靠性加固</td></tr>
+<tr><td>5W1H 移除</td><td><code>fact_merge.py</code> 删除、<code>fact_extract/p4</code> 瘦身 -400 行</td><td>负向优化（有评测背书）</td></tr>
+<tr><td>论文弹药</td><td><code>docs/thesis/</code> 五件套、CONTEXT.md、lessons/</td><td>写作与教学资产</td></tr>
+</table>
+
+<div class="box gold"><b class="tag">建议（动手前问过自己一遍就行）</b>
+这些改动值得按主题切成几个 commit 收尾——不是为了好看，是为了让「第二幕」也拥有可追溯的历史：比如 <code>feat(P6): digest/events/feed 输出层</code>、<code>fix(ingest): admission gate for incomplete texts (Q10)</code>、<code>refactor(p4): remove 5W1H pipeline (eval-backed)</code>、<code>docs: thesis writing kit + teaching lessons</code> 各一笔。历史干净与否不影响功能，但在答辩前它是最便宜的加分项。
+</div>
+
+<!-- ============ 4 测试地图 ============ -->
+<h2>④ 测试现状地图：10 个测试都在哪</h2>
+
+<table>
+<tr><th>文件</th><th>n</th><th>覆盖点</th><th>方法</th></tr>
+<tr><td><code>test_health.py</code></td><td>2</td><td>/health、/ 冒烟</td><td>TestClient 直打</td></tr>
+<tr><td><code>test_ingest.py</code></td><td>3</td><td>批内 URL 去重、对库去重、<b>准入闸门拒收残句</b>（Q10 取代 Q2 老决策）</td><td>async + 内存 SQLite/真实 session 夹具</td></tr>
+<tr><td><code>test_rag.py</code></td><td>5</td><td>空召回必拒答、正常引用有效、LLM 自陈不足即拒答、<b>越界引用被检出</b>、异常降级为拒答</td><td>mock 检索层，只测生成契约</td></tr>
+</table>
+
+<p>特点一眼可见：<b>闸门类测试强</b>（URL 幂等、文本完整性、引用越界、拒答触发——全是「防线」），<b>算法类测试零</b>。</p>
+
+<!-- ============ 5 盲区 ============ -->
+<h2>⑤ 盲区分级：哪些该补，哪些坦然承认</h2>
+
+<table>
+<tr><th>盲区</th><th>风险</th><th>处置建议</th></tr>
+<tr><td><code>dedup_one</code> 三岔口（spawn/attach/skip）</td><td class="hl"><b>最高危</b>：核心算法零单测，阈值边界（&gt;0.90 严格大于）全靠手验</td><td>补 3 个纯函数级用例即可，无需 DB（候选列表 mock 进去）</td></tr>
+<tr><td><code>retrieve</code> 三段漏斗</td><td>时间窗解析、Top-20 SQL、rerank 降级路径无回归保护</td><td>至少测「rerank 抛异常时退回 ANN 序」这一条降级路径</td></tr>
+<tr><td>digest/events/feed 端点</td><td>排序口径（breadth）刚改过，无防回归网</td><td>各 1 条冒烟足够</td></tr>
+<tr><td>summarize fallback 分支</td><td>中危：降级行为有 PITFALLS 记录但无断言</td><td>可选</td></tr>
+<tr><td>P4 LLM 合并质量</td><td>外部依赖重，单测只能测假 LLM</td><td><b>坦然承认</b>：这层的正确性由评测集兜底，不硬造单测</td></tr>
+</table>
+
+<div class="box why"><b class="tag">论文话术：两层验证体系</b>
+被问「测试怎么这么少」时的标准答案：<i>本系统的验证分两层——单元测试守行为不变量（幂等、拒收、引用越界必报、异常必降级），评测体系守效果指标（set recall@5、refusal accuracy、faithfulness、消融）。</i>P4 这类 LLM 主导环节，单测只能证明「代码跑了」不能证明「结果对」，所以投入放在了可复现评测上。<b>这是资源分配的自觉选择，不是遗漏。</b>
+</div>
+
+<!-- ============ 6 自测 ============ -->
+<h2>⑥ 三问自测</h2>
+
+<div class="qz"><b>Q1.</b> 「最近一周政治新闻」误拒不怪拒答逻辑——那两条提交/文件分别是什么？</div>
+<details><summary>答案</summary><p>根因链在 <code>retrieval.py</code> 的 <code>_parse_time_window</code> 用墙钟 <code>datetime.now()</code> 解析时间词 × 评测用的是 7 月冻结快照。证据在 <code>data/rag_eval_results.json</code> 那两行 refusal=True 且 gold 非空的 broad 题（对应全量行口径 46/48=0.958 里扣掉的 2 分）。</p></details>
+
+<div class="qz"><b>Q2.</b> 如果评委说「你们只有 10 个测试」，最有力的一句话回应？</div>
+<details><summary>答案</summary><p>「单元测试守行为不变量，评测集守效果指标——dedup 阈值是在 100 对金标上调出来并可离线重放的，这比多写十个 mock 单测更能证明系统正确。」然后主动指出已知盲区（dedup_one 三岔口）和补法，显示的不是辩护而是清醒。</p></details>
+
+<div class="qz"><b>Q3.</b> 提交信息里哪一条直接支撑论文的阈值迁移性章节？原文背诵级别。</div>
+<details><summary>答案</summary><p><code>P3 v2: tuned threshold 0.75 -> 0.90 (precision 0.134 -> 0.929)</code> —— 初版阈值失败的诚实记录 + 调优后的量化提升 + 配套脚本与金标同提交入库。</p></details>
+
+<!-- ============ 附录 ============ -->
+<h2>附录：17 个提交全清单</h2>
+<pre>
+<span class="c">07-06</span> 1c0d5c2 docs: HANDOFF 加 7.5 节 论文补充物 12 条
+<span class="c">07-06</span> 89691f0 docs: HANDOFF.md - 交接文档供 Kimi 2.7 接手
+<span class="c">07-06</span> 791ba82 P5: RAG three-stage retrieval + constrained generation + SSE streaming
+<span class="c">07-06</span> c65c0cc docs: README + PITFALLS reflect P4 v2 (category majority vote...)
+<span class="c">07-06</span> d146ee0 P4 v2 grilling fixes: LLM category majority vote + conflict fact_strings
+<span class="c">07-06</span> e89141f P4: 5W1H fact extraction + 4-grade merge + multi-source re-embed
+<span class="c">07-06</span> 92e1f2c docs: README + PITFALLS reflect P1/P2/P3 progress + grilling fixes
+<span class="c">07-06</span> 4a31d26 P3 v2: tuned threshold 0.75 -> 0.90 (precision 0.134 -> 0.929)  <span class="hl">← 金句</span>
+<span class="c">07-06</span> 8b978b4 P3 grilling fixes: attach keywords union + 100-pair gold tuning
+<span class="c">07-06</span> 4c4b03b P3: keyword-gate + ANN event dedup (130 reports -> 86 events)
+<span class="c">07-05</span> e7d6d94 P2 v3: per-row model+token provenance, plagiarism 15->20...
+<span class="c">07-05</span> ac3df2a docs: PITFALLS add fallback pollution + null embedding...
+<span class="c">07-05</span> 05ef37e P2 grilling fixes: summary_source column + embedding NULL...
+<span class="c">07-05</span> 0a4cd43 P2: deepseek adaptive summary + BGE-small-zh local embedding
+<span class="c">07-05</span> 5d49118 P1: real RSS ingest end-to-end (130 reports persisted)
+<span class="c">07-05</span> b8dc97e docs: update README P0 status + PITFALLS reference
+<span class="c">07-05</span> cc55aeb P0: scaffold + ORM v5 (7 tables, pgvector, ingest modules)
+</pre>
+<p class="lead" style="margin-top:8px">规律自见：每个 P 阶段 = 功能提交 + grilling-fix 提交（+文档提交）。v1/v2/v3 编号是自我审查节奏的化石。</p>
+
+<p class="footer-note">bishe 教学系列 · 第6课 · 数据来源：git log / git status / tests/ 实录，2026-08-23</p>
+</div>
+</body>
+</html>

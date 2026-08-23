@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>第5课 · Schema 与索引：每个列和索引都有理由</title>
+<style>
+  :root { --ink:#1a2332; --muted:#5a6a7e; --line:#dde4ec; --bg:#f7f8fa; --card:#ffffff;
+          --accent:#1e3a5f; --gold:#8a6d1a; --green:#1a6b3c; --red:#a12622; --code-bg:#0f1720; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+         color:var(--ink); background:var(--bg); line-height:1.75; padding-bottom:80px; }
+  .wrap { max-width:860px; margin:0 auto; padding:0 24px; }
+  header.hero { background:linear-gradient(135deg,#16283f,#1e3a5f); color:#fff; padding:56px 0 44px; margin-bottom:40px; }
+  .hero .eyebrow { letter-spacing:.3em; font-size:12px; opacity:.7; margin-bottom:10px; }
+  .hero h1 { font-size:clamp(1.8rem,4vw,2.6rem); font-weight:700; }
+  .hero p.sub { margin-top:12px; opacity:.85; max-width:640px; }
+  h2 { font-size:1.45rem; margin:52px 0 18px; padding-left:14px; border-left:4px solid var(--accent); }
+  h3 { font-size:1.08rem; margin:28px 0 10px; color:var(--accent); }
+  p { margin:10px 0; }
+  .lead { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; margin:16px 0; background:var(--card); font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top; }
+  th { background:#eef2f7; font-weight:600; white-space:nowrap; }
+  td code, p code, li code { background:#e8edf3; border-radius:4px; padding:1px 6px;
+        font-family:ui-monospace,Consolas,monospace; font-size:.86em; color:#0f3a66; }
+  pre { background:var(--code-bg); color:#dbe7f3; border-radius:8px; padding:16px 18px;
+        overflow-x:auto; font-size:.84rem; line-height:1.6; margin:14px 0;
+        font-family:ui-monospace,Consolas,monospace; }
+  pre .c { color:#7a93ad; } pre .k { color:#8fd0ff; } pre .s { color:#b5e08a; } pre .hl { color:#ffd479; }
+  .box { border-radius:8px; padding:14px 18px; margin:16px 0; font-size:.93rem; }
+  .box.why { background:#f2f7ee; border-left:4px solid var(--green); }
+  .box.warn { background:#fdf3ef; border-left:4px solid var(--red); }
+  .box.gold { background:#fbf6e8; border-left:4px solid var(--gold); }
+  .box b.tag { display:block; margin-bottom:4px; font-size:.85rem; letter-spacing:.08em; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:16px 0; }
+  @media (max-width:640px){ .cols{grid-template-columns:1fr;} }
+  .qz { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px 20px; margin:12px 0; }
+  .qz b { color:var(--accent); }
+  details { margin-top:8px; } summary { cursor:pointer; color:var(--accent); font-weight:600; }
+  details p { margin-top:8px; }
+  .footer-note { text-align:center; color:var(--muted); font-size:.85rem; margin-top:64px; }
+</style>
+</head>
+<body>
+
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">BISHE TEACH · LESSON 05</div>
+  <h1>Schema 与索引：每个列和索引都有理由</h1>
+  <p class="sub">上一课讲了函数怎么跑。这一课往下一层：表为什么长这样、索引为什么是这四种——核心只有一句话：<b>索引为查询形状服务</b>。所有内容来自 models.py 与真实库的 pg_indexes，无一处凭记忆。</p>
+</div></header>
+
+<div class="wrap">
+
+<!-- ============ 1 全景 ============ -->
+<h2>① 六张表的全景：两张主表 + 四张配角表</h2>
+<pre>
+news_report ──N:1──▶ news_event          ◀── 核心两表（业务全在这）
+     │                    │
+     └─1:N─▶ news_report_fact   news_event ──▶ fact_slots / conflict_flags (JSONB 内嵌)
+
+user_profile          rag_eval_set → rag_eval_run          dedup_eval_set
+（显式兴趣标签）        （RAG 评测：题集 + 每次运行快照）        （去重阈值调优金标）
+</pre>
+<p class="lead">读法：<code>news_report.event_id</code> 外键指向 <code>news_event.id</code>，一篇报道最多属于一个事件；事件删了报道不删（下面讲为什么）。四张配角表全部服务于「可评测、可复现」——这是本毕设和其他新闻聚合项目拉开差距的地方。</p>
+
+<!-- ============ 2 report 列 ============ -->
+<h2>② news_report：六列有故事的列</h2>
+<table>
+<tr><th>列</th><th>定义</th><th>为什么</th></tr>
+<tr><td><code>original_url</code></td><td>String(1024) <b>UNIQUE</b></td><td>P1 URL 去重的<b>最后防线</b>。应用层查重失败（并发、崩溃）数据库也会拒绝重复插入——唯一约束是免费的幂等保险丝。</td></tr>
+<tr><td><code>raw_text</code></td><td>Text 可 NULL</td><td>历史遗留允许 NULL（准入闸门上线前的旧数据）；新代码里残句在 persist 就被拒收。</td></tr>
+<tr><td><code>embedding</code></td><td>Vector(512) 可 NULL</td><td><b>NULL 当业务过滤器用</b>：raw_text 为空的行不造假向量（Q2 fix），NULL 自动把该行排除出 P3 ANN 去重和 P5 检索——不用额外的布尔列。</td></tr>
+<tr><td><code>summary_source</code></td><td>'llm' / 'fallback'</td><td>Q1 fix：P2 重处理时只挑 <code>!= 'llm'</code> 的行补摘要——<b>断点续跑</b>，LLM 挂了不重烧已成功的行。</td></tr>
+<tr><td><code>summary_model</code><br><code>summary_tokens</code></td><td>逐行记录</td><td>Q15 fix：每行存用了哪个模型版本、烧了多少 token。论文可复现性声明和成本审计的数据来源。</td></tr>
+<tr><td><code>event_id</code></td><td>FK，<b>ondelete=SET NULL</b></td><td>删事件时报道保留、指针清空。<code>event_id IS NULL</code> 恰好就是 P3 的扫描条件——「待重新聚合」不需要额外状态列。</td></tr>
+</table>
+
+<div class="box why"><b class="tag">设计原则一：NULL 当语义过滤器</b>
+embedding 为 NULL ≠ 数据缺失，而是「此行不具备向量资格」。省掉 needs_embedding 布尔列，SQL 里 <code>embedding IS NOT NULL</code> 一刀切干净。</div>
+
+<!-- ============ 3 event 列 ============ -->
+<h2>③ news_event：五列有故事的列</h2>
+<table>
+<tr><th>列</th><th>定义</th><th>为什么</th></tr>
+<tr><td><code>event_publish_time</code></td><td>写时预计算 = MIN(报道时间)</td><td><b>反规范化换速度</b>：P5 时间预过滤要按时间范围扫事件，有了这列直接走 btree 索引，不必每次 JOIN 报道表再 GROUP BY 取 MIN。</td></tr>
+<tr><td><code>keywords</code></td><td>ARRAY(Text) + GIN</td><td>关键词闸门的 SQL 是 <code>keywords &amp;&amp; ARRAY['…']</code>（数组相交）。数组相交只有 GIN 能服务，btree 对它无意义。</td></tr>
+<tr><td><code>source_count</code></td><td>Integer 内部计数器</td><td>attach 时 +1 的<b>报道篇数</b>。对外展示口径是 COUNT(DISTINCT source_site)=source_breadth（API 字段 source_breadth）。列保留是为了历史评测数字可复现。</td></tr>
+<tr><td><code>fact_slots</code> / <code>conflict_flags</code></td><td>JSONB</td><td>5W1H 槽位是半结构化数据，结构还在演进（v5）——JSONB 免 ALTER TABLE。GIN 索引支持「查有冲突的事件」。</td></tr>
+<tr><td><code>merged_summary</code> + <code>embedding</code></td><td>Text + Vector(512)</td><td>事件级 LLM 合并摘要再 embed（P4 异步重算）：事件向量中心由全体报道共同决定，不被首篇措辞偏置。</td></tr>
+</table>
+
+<div class="box warn"><b class="tag">反规范化的代价要诚实</b>
+MIN(publish_time) 写时算意味着每次 attach 都要多一条 UPDATE 维护它。这笔交易划算是因为读写比悬殊（读几百次才写一次）。如果反过来写多读少，就该现算。</div>
+
+<!-- ============ 4 索引 ============ -->
+<h2>④ 四种索引，各自服务一种查询形状</h2>
+<p class="lead">真实库里的索引（pg_indexes 输出），每一个都对应一条真实 SQL：</p>
+<table>
+<tr><th>索引</th><th>DDL</th><th>服务的查询</th></tr>
+<tr><td>HNSW 向量</td><td><code>USING hnsw (embedding vector_cosine_ops) WITH (m='16', ef_construction='64')</code></td><td>P3 去重与 P5 召回的 <code>embedding <=> :query</code> 余弦近邻</td></tr>
+<tr><td>GIN 数组</td><td><code>USING gin (keywords)</code></td><td>关键词闸门 <code>keywords && ARRAY[...]</code></td></tr>
+<tr><td>btree 时间</td><td><code>USING btree (event_publish_time)</code></td><td>P5 预过滤 <code>&gt;= x AND &lt; y</code> 范围扫描；列表页时间排序</td></tr>
+<tr><td>唯一 btree</td><td><code>UNIQUE (original_url)</code></td><td>P1 幂等插入 + URL 点查</td></tr>
+</table>
+<p class="lead">其余 btree（category、source_count、ts、publish_time、source_site、event_id）同理：外键索引用于 JOIN/级联，低基数列索引服务于过滤下拉框。没有一条索引是「以防万一」加上去的。</p>
+
+<h3>HNSW 两个参数在赌什么</h3>
+<p>HNSW = 分层可导航小世界图，把暴力 O(N) 扫描变成近似 O(logN) 跳转。两个旋钮：</p>
+<ul>
+<li><b>m=16</b> —— 每个节点的出边数。边越多图越连通、召回越高，内存和构建时间也涨。16 是 pgvector 的常用值。</li>
+<li><b>ef_construction=64</b> —— 建图时候选队列深度，决定图的质量上限。查询侧另有 ef_search（本项目用 pgvector 默认值，未调——论文如实标注）。</li>
+</ul>
+<div class="box gold"><b class="tag">答辩弹药：为什么 HNSW 不用 IVFFlat</b>
+IVFFlat 要先聚类出中心点（训练步骤），数据量小的时候划分不稳、召回波动大；HNSW 免训练、增量插入友好、中小数据集表现稳定。187 个事件的库用 HNSW 是量体裁衣，不是追时髦。</div>
+
+<!-- ============ 5 原则 ============ -->
+<h2>⑤ 把这一课压缩成四条原则</h2>
+<div class="cols">
+<div class="box why"><b class="tag">原则一</b>先写 SQL，再定索引。索引为查询形状服务，「以后可能查」不是加索引的理由。</div>
+<div class="box why"><b class="tag">原则二</b>NULL 可以承载业务语义（不合格即无向量），但要用得像 embedding 这样有明确判据。</div>
+<div class="box why"><b class="tag">原则三</b>读多写少的聚合值（MIN 时间、计数器）写时预计算，把 JOIN 成本从每次读移到一次写。</div>
+<div class="box why"><b class="tag">原则四</b>数据库约束是最后防线：UNIQUE 管幂等，FK ondelete 管级联语义，应用层代码只是第一道关。</div>
+</div>
+
+<!-- ============ 6 自测 ============ -->
+<h2>⑥ 三问自测</h2>
+<div class="qz"><b>问1：</b>为什么 keywords 用 GIN 而 event_publish_time 用 btree？互换行不行？
+<details><summary>答案</summary><p>不行。GIN 是倒排结构，服务「集合包含」类谓词（&amp;&amp;）；btree 有序，服务范围与排序（&gt;=、ORDER BY）。数组相交给 btree 它不知道怎么比大小；范围扫描给 GIN 是杀鸡用牛刀且不支持。</p></details></div>
+<div class="qz"><b>问2：</b>删掉一个事件后，它的报道去哪了？P3 会怎么处理它们？
+<details><summary>答案</summary><p>报道还在，event_id 被 SET NULL。P3 扫描条件正是 event_id IS NULL，所以它们会被重新提取关键词、重新走闸门+向量判定——要么挂进别的现存事件，要么 spawn 成新事件。删除操作天然触发了「重新聚合」。</p></details></div>
+<div class="qz"><b>问3：</b>event_publish_time 为什么不在查询时 SUM/MIN 现算？什么情况下这个决定会变成错误？
+<details><summary>答案</summary><p>现算要 JOIN news_report GROUP BY，时间预过滤就没法只用事件表的 btree 索引了。若系统变成「事件频繁变动」（每秒 attach 几十次）而读取很少，维护反规范化列的开销超过收益，那时该改回视图或现算。决策依据永远是读写比。</p></details></div>
+
+<!-- ============ 附录 ============ -->
+<h2>附录 A · 参数全景表（参考文档）</h2>
+<table>
+<tr><th>参数</th><th>值</th><th>出处 / 理由</th></tr>
+<tr><td>EMBED_DIM</td><td>512</td><td>bge-small-zh 输出维度（models.py:37）</td></tr>
+<tr><td>dedup_sim_threshold</td><td><b>0.90</b></td><td>settings 统一入口；100 对金标上按 precision≥0.9 调出（tune_dedup_threshold.py）</td></tr>
+<tr><td>去重候选上限</td><td>50</td><td>dedup.py:62 SQL 闸门 LIMIT，纯 Python 余弦只在这 50 条里算</td></tr>
+<tr><td>事件关键词封顶</td><td>6</td><td>attach 时并集截断（Q2 fix）</td></tr>
+<tr><td>top_recall / top_final</td><td>20 / 5</td><td>retrieval.py:147,181 三段漏斗的 ANN 召回数与最终上下文数</td></tr>
+<tr><td>DIGEST_LIMIT</td><td>10</td><td>digest.py:24 简报条数</td></tr>
+<tr><td>SUMMARY_TEMP / RAG_TEMP</td><td>0.3 / 0.1</td><td>summarize.py:33-34 摘要允许轻度复述，答题必须贴紧 context</td></tr>
+<tr><td>answer max_tokens</td><td>800</td><td>answer.py:173</td></tr>
+<tr><td>deepseek_rag_daily_limit</td><td>200</td><td>config.py RAG 日调用限额（演示保险）</td></tr>
+<tr><td>三模型</td><td colspan="2">deepseek-chat（生成）、BAAI/bge-small-zh（embed）、BAAI/bge-reranker-base（CPU 重排）</td></tr>
+<tr><td>HNSW</td><td>m=16, ef_construction=64</td><td>真实库 DDL；查询侧 ef_search 用默认未调</td></tr>
+</table>
+
+<h2>附录 B · 跨文件契约速查（参考文档）</h2>
+<table>
+<tr><th>契约</th><th>内容</th><th>易错点</th></tr>
+<tr><td>RAG 提问</td><td><code>POST /api/rag/ask</code> body 字段是 <code>query</code></td><td>不是 question；实测踩过</td></tr>
+<tr><td>SSE 序列</td><td><code>meta</code>(检索结果) → <code>token</code>×N → <code>done</code>(含 citations_valid)</td><td>前端按事件类型分发，顺序固定</td></tr>
+<tr><td>引用校验</td><td>citations_valid = 答案中 [事件#X] 的 X ∈ 本次召回集</td><td>越界引用记 false，评测口径 citation_valid_rate</td></tr>
+<tr><td>多源度字段</td><td>API 对外语义是 <code>source_breadth</code>（DISTINCT source_site 计数）</td><td>source_count 是内部篇数计数，两者不同</td></tr>
+<tr><td>拒答信号</td><td>done 事件 refusal 标志 + 文案「信息不足」</td><td>评测脚本以 refusal == (gold为空) 判对错</td></tr>
+</table>
+
+<p class="footer-note">第5课完 · 下一课预告：第6课讲 git 演进史与测试盲区（怎么从提交记录里挖答辩叙事）</p>
+</div>
+</body>
+</html>

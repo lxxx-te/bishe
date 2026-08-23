@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bishe 第4课 · 函数级调用链</title>
+<style>
+  :root {
+    --ink: #1e3a5f; --ink-strong: #14263d; --muted: #5a6b7d; --faint: #8a97a5;
+    --surface: #ffffff; --bg: #f6f4ef; --line: #e5e1d8; --line-strong: #cfc9bc;
+    --accent: #b45309; --accent-bg: #fdf3e7; --green: #166534; --green-bg: #f0f7f1;
+    --red: #b91c1c; --red-bg: #fdf0ef;
+    --serif: "Noto Serif SC", "Source Han Serif SC", "STZhongsong", serif;
+    --sans: "Noto Sans SC", "Microsoft YaHei", -apple-system, sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.75; }
+  .page { max-width: 900px; margin: 0 auto; padding: 48px 28px 80px; }
+  header.hero { border-bottom: 3px double var(--line-strong); padding-bottom: 28px; margin-bottom: 36px; }
+  .eyebrow { font-size: 11px; letter-spacing: .3em; color: var(--faint); font-weight: 700; margin: 0 0 10px; }
+  h1 { font-family: var(--serif); font-size: clamp(1.9rem, 4.5vw, 2.7rem); margin: 0 0 12px; color: var(--ink-strong); line-height: 1.2; }
+  .hero p.lede { color: var(--muted); font-size: 15.5px; margin: 0; max-width: 660px; }
+  h2 { font-family: var(--serif); font-size: 1.45rem; color: var(--ink-strong); margin: 56px 0 6px; display: flex; align-items: baseline; gap: 12px; }
+  h2 .path { font-family: var(--mono); font-size: .95rem; color: var(--accent); font-weight: 600; }
+  h3 { font-size: 1.02rem; color: var(--ink-strong); margin: 26px 0 8px; }
+  p { margin: 10px 0; }
+  code { font-family: var(--mono); font-size: .86em; background: #ede9df; padding: 2px 6px; border-radius: 4px; color: #7c3a0d; }
+  pre { background: #14263d; color: #dce6f2; border-radius: 10px; padding: 18px 22px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.65; margin: 14px 0; }
+  pre .cm { color: #7a93b0; } pre .kw { color: #f0b429; } pre .fn { color: #7fd4a8; } pre .str { color: #e8a0a0; } pre .num { color: #c9a7ff; }
+  pre .mark { background: rgba(240,180,41,.22); display: inline-block; width: 100%; border-radius: 3px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 22px 26px; margin: 16px 0; box-shadow: 0 1px 3px rgba(20,38,61,.05); }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; background: var(--surface); }
+  th { text-align: left; font-size: 12px; letter-spacing: .08em; color: var(--faint); border-bottom: 2px solid var(--line-strong); padding: 8px 10px; }
+  td { border-bottom: 1px solid var(--line); padding: 9px 10px; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.f { font-family: var(--mono); font-size: .84rem; white-space: nowrap; color: var(--ink-strong); }
+  .callout { border-left: 4px solid var(--accent); background: var(--accent-bg); padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 18px 0; font-size: 14.5px; }
+  .callout.green { border-color: var(--green); background: var(--green-bg); }
+  .callout.red { border-color: var(--red); background: var(--red-bg); }
+  .callout b { color: var(--ink-strong); }
+  .flow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 18px 0; font-size: 13px; }
+  .flow .step { background: var(--ink-strong); color: #fff; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-family: var(--mono); font-size: 12px; }
+  .flow .step small { display: block; font-weight: 400; opacity: .75; font-size: 10.5px; font-family: var(--sans); }
+  .flow .arr { color: var(--faint); font-size: 16px; }
+  .flow .branch { background: #fff; border: 1.5px dashed var(--accent); color: var(--accent); padding: 6px 12px; border-radius: 6px; font-weight: 600; font-family: var(--mono); font-size: 12px; }
+  details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 18px; margin: 10px 0; }
+  summary { cursor: pointer; font-weight: 600; color: var(--ink-strong); }
+  footer { margin-top: 64px; border-top: 1px solid var(--line-strong); padding-top: 20px; color: var(--faint); font-size: 13px; }
+  @media print { body { background: #fff; } .card, pre { break-inside: avoid; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="hero">
+  <p class="eyebrow">BISHE 自学课程 · LESSON 0004</p>
+  <h1>函数级调用链：两条主线走遍全系统</h1>
+  <p class="lede">上一课记住了「哪个文件夹放什么」。这一课把两条最重要的执行路径——<b>报道入库聚合线</b>和<b>RAG 问答线</b>——拆到函数级：谁调用谁、传什么参数、在哪一步做决策。所有代码都是仓库真实片段（有删节）。</p>
+</header>
+
+<!-- ==================== 全景 ==================== -->
+<h2>〇 · 两条主线全景<span class="path">overview</span></h2>
+<p class="oneline">整个后端只有两条会「跑起来」的链路，其余端点都是它们的变体。</p>
+
+<div class="card">
+<h3 style="margin-top:0">A 线 · 报道入库聚合线（写入时发生）</h3>
+<div class="flow">
+  <span class="step">rss.fetch_all_feeds<small>P1 抓取</small></span><span class="arr">→</span>
+  <span class="step">persist_items<small>准入闸门</small></span><span class="arr">→</span>
+  <span class="step">summarize+embed<small>P2 摘要/向量</small></span><span class="arr">→</span>
+  <span class="step">extract_keywords_batch<small>关键词</small></span><span class="arr">→</span>
+  <span class="step">dedup_one<small>P3 聚合决策</small></span><span class="arr">→</span>
+  <span class="branch">attach → P4 后台重算<small>防首篇偏置</small></span>
+  <span class="arr">/</span>
+  <span class="branch">spawn 新事件</span>
+</div>
+<p style="font-size:13.5px;color:var(--muted)">触发方式：<code>python -m app.pipelines... </code> 或 API 触发采集；答辩演示前一天早上手动重采的就是这条线。</p>
+
+<h3>B 线 · RAG 问答线（用户提问时发生）</h3>
+<div class="flow">
+  <span class="step">POST /api/rag/ask<small>body: {"query": ...}</small></span><span class="arr">→</span>
+  <span class="step">rag_answer_stream<small>SSE 生成器</small></span><span class="arr">→</span>
+  <span class="step">retrieve()<small>三段检索</small></span><span class="arr">→</span>
+  <span class="step">yield meta<small>事件ID列表</small></span><span class="arr">→</span>
+  <span class="step">DeepSeek 流式<small>受约束生成</small></span><span class="arr">→</span>
+  <span class="step">yield token×N + done<small>逐句+引用校验</small></span>
+</div>
+</div>
+
+<!-- ==================== A线 ==================== -->
+<h2>一 · A线第1关：准入闸门<span class="path">app/services/persist.py</span></h2>
+<p class="oneline">残句、纯标题、纯署名在这里被拒之门外——2026-08 新增，起因是事件 #116 的 18 字残句摘要。</p>
+
+<pre><span class="cm"># 判据：结构完整，不看长度。剥掉尾部引号/括号后，正文必须停在句末标点上。</span>
+_TERMINAL_PUNCT = (<span class="str">"。"</span>, <span class="str">"！"</span>, <span class="str">"？"</span>, <span class="str">"…"</span>)
+_CLOSING_WRAPPERS = (<span class="str">"」"</span>, <span class="str">"』"</span>, <span class="str">'"</span>', <span class="str">'"'</span>, <span class="str">"'"</span>, <span class="str">")"</span>, <span class="str">"）"</span>, <span class="str">"]"</span>, <span class="str">"】"</span>, <span class="str">"〉"</span>, <span class="str">"»"</span>)
+
+<span class="kw">def</span> <span class="fn">has_complete_text</span>(text: str) -> bool:
+    t = text.rstrip()
+    <span class="kw">while</span> t <span class="kw">and</span> t.endswith(_CLOSING_WRAPPERS):   <span class="cm"># 「他说："……。"」 引语结尾合法</span>
+        t = t[:-1]
+    <span class="kw">return</span> t.endswith(_TERMINAL_PUNCT)
+
+<span class="kw">async def</span> <span class="fn">persist_items</span>(items):
+    ...
+    <span class="kw">if not</span> has_complete_text(raw):      <span class="mark">← 不合格：rejected 计数 + 日志跳过，不入库</span>
+        rejected += <span class="num">1</span>; <span class="kw">continue</span></pre>
+
+<div class="callout green"><b>为什么按结构不按长度？</b>你自己在 Q10 拷问中否决了长度闸门：「有短新闻的」——#45《…致贺电。》全文 23 字但是完整快讯。判据只回答一个问题：<i>这句话说完了吗？</i></div>
+
+<!-- ==================== A线 dedup ==================== -->
+<h2>二 · A线核心：dedup_one 的三岔口<span class="path">app/services/dedup.py:112</span></h2>
+<p class="oneline">每篇新报道面对三个出口：跳过 / attach 进旧事件 / spawn 成新事件。</p>
+
+<pre><span class="kw">async def</span> <span class="fn">dedup_one</span>(session, report, keywords) -> dict:
+    <span class="kw">if</span> report.embedding <span class="kw">is</span> <span class="kw">None</span>:                        <span class="cm"># ① 无向量 → 无法语义去重</span>
+        <span class="kw">return</span> {<span class="str">"action"</span>: <span class="str">"skipped_null_embedding"</span>}
+    candidates = <span class="kw">await</span> <span class="fn">_find_candidate_events</span>(session, keywords)
+    <span class="kw">if not</span> candidates:                                  <span class="cm"># ② 关键词零重叠 → 直接 spawn</span>
+        event = <span class="kw">await</span> <span class="fn">_spawn_event</span>(session, report, keywords)
+        <span class="kw">return</span> {<span class="str">"action"</span>: <span class="str">"spawn"</span>, ...}
+    best_event, best_sim = <span class="kw">None</span>, <span class="num">0.0</span>
+    <span class="kw">for</span> ev <span class="kw">in</span> candidates:                               <span class="cm"># ③ 小候选集上纯 Python 余弦</span>
+        sim = <span class="fn">_cosine</span>(report.embedding, ev.embedding)
+        <span class="kw">if</span> sim > best_sim: best_sim, best_event = sim, ev
+    <span class="kw">if</span> best_event <span class="kw">and</span> best_sim > DEDUP_THRESHOLD:       <span class="mark">← 0.90，严格大于</span>
+        <span class="kw">await</span> <span class="fn">_attach_to_event</span>(session, report, best_event, keywords)
+        <span class="kw">return</span> {<span class="str">"action"</span>: <span class="str">"attach"</span>, ...}
+    <span class="kw">return</span> {<span class="str">"action"</span>: <span class="str">"spawn"</span>, ...}                    <span class="cm"># ④ 有候选但都不够像 → spawn</span></pre>
+
+<h3>两级漏斗的设计意图</h3>
+<table>
+<tr><th>层</th><th>函数</th><th>机制</th><th>为什么</th></tr>
+<tr><td><b>第一级 关键词闸门</b></td><td class="f">_find_candidate_events</td><td>SQL <code>keywords &amp;&amp; :kws</code>（数组重叠运算符），GIN 索引，最多取 50 个候选</td><td>把全表 ANN 变成小集合精算；关键词不重叠的事件基本不可能同事件</td></tr>
+<tr><td><b>第二级 向量兜底</b></td><td class="f">_cosine 循环</td><td>候选 ≤50 个，纯 Python 点积即可；阈值 <code>> 0.90</code> 才 attach</td><td>向量相似但关键词措辞不同的场景由它接住——两级互为安全边际</td></tr>
+</table>
+
+<div class="callout"><b>陷阱提醒（答辩可能被问）：</b>本文件顶部 docstring 写着「max similarity &gt; 0.75」——<b>注释在撒谎</b>，代码真相是 <code>DEDUP_THRESHOLD = settings.dedup_sim_threshold</code>（默认 0.90）。读代码永远以代码为准。另外历史教训：0.75 时 precision 只有 0.134，灾难级。</div>
+
+<h3>attach 之后发生什么（Q2 fix + Q20 fix）</h3>
+<pre><span class="kw">async def</span> <span class="fn">_attach_to_event</span>(session, report, event, new_keywords):
+    report.event_id = event.id
+    event.source_count += <span class="num">1</span>                          <span class="cm"># 内部计数列：数的是报道篇数</span>
+    merged = <span class="fn">list</span>(<span class="fn">set</span>((event.keywords or []) + new_keywords))[:<span class="num">6</span>]   <span class="mark">← 并集去重，封顶6个</span>
+    event.keywords = merged
+    <span class="kw">if</span> report.publish_time <span class="kw">and</span> report.publish_time < event.event_publish_time:
+        event.event_publish_time = report.publish_time    <span class="mark">← 取 MIN，供时间预过滤</span>
+    <span class="kw">await</span> session.commit()
+    <span class="cm"># 随后 BackgroundTasks 异步调 P4：LLM 重合并所有报告摘要 → 重 embed 事件中心</span></pre>
+
+<ul>
+<li><b>keywords 并集封顶 6 个</b>（Q2 fix）：否则首篇的关键词固化，后续措辞不同的报道撞不上闸门，会错误 spawn 出重复事件（lessons/0002 讲过的 bug）。</li>
+<li><b>event_publish_time 取 MIN</b>：事件时间=最早报道时间，这是 B 线时间预过滤的索引列。</li>
+<li><b>P4 异步重算</b>（Q20 fix）：事件向量不再停留在首篇「锚点」，而是所有成员摘要的 LLM 合并结果的 embedding——防单篇措辞偏置。</li>
+<li><b>source_count 是内部计数</b>：对外展示口径是 <code>source_breadth = COUNT(DISTINCT source_site)</code>，API 字段已改名。此列保留是为了不破坏历史评测可复现性。</li>
+</ul>
+
+<!-- ==================== B线 ==================== -->
+<h2>三 · B线总调度：rag_answer_stream<span class="path">app/services/rag/answer.py:104</span></h2>
+<p class="oneline">一个 async 生成器，边算边 yield SSE 事件——前端 ChatView 逐句渲染的秘密。</p>
+
+<h3>SSE 事件序列契约（跨文件，前端按此解析）</h3>
+<table>
+<tr><th>顺序</th><th>event:</th><th>data 载荷</th><th>消费者</th></tr>
+<tr><td>1</td><td class="f">meta</td><td><code>{"event_ids": [51,63,...]}</code></td><td>ChatView 显示「命中 N 个事件」徽标</td></tr>
+<tr><td>2..n</td><td class="f">token</td><td>一个完整句子（可多行 data: 行）</td><td>追加到答案区</td></tr>
+<tr><td>末</td><td class="f">done</td><td><code>{"refusal": bool, "citations": [...], "citations_valid": bool}</code></td><td>引用徽章 / 拒答样式</td></tr>
+</table>
+
+<pre><span class="kw">async def</span> <span class="fn">rag_answer_stream</span>(session, query_text, ...):
+    event_ids = <span class="kw">await</span> <span class="fn">retrieve</span>(session, query_text, ...)      <span class="cm"># ← 三段检索，见下节</span>
+    <span class="kw">yield</span> <span class="str">f"event: meta\ndata: {json.dumps({'event_ids': event_ids})}\n\n"</span>
+    <span class="kw">if not</span> event_ids:                                          <span class="mark">← 检索为空 = 硬拒答</span>
+        <span class="kw">yield</span> <span class="str">"event: token\ndata: 信息不足\n\n"</span>
+        <span class="kw">yield</span> <span class="str">'event: done\ndata: {"refusal": true}\n\n'</span>; <span class="kw">return</span>
+    events_with_reports = <span class="kw">await</span> <span class="fn">fetch_events_with_reports</span>(session, event_ids)
+    context = <span class="fn">_build_context</span>(events_with_reports)              <span class="cm"># 每事件一块：摘要/类别/时间/来源</span>
+    stream = <span class="kw">await</span> client.chat.completions.create(model=..., stream=<span class="kw">True</span>,
+                 messages=[{<span class="str">"role"</span>:<span class="str">"system"</span>, <span class="str">"content"</span>: RAG_SYSTEM},      <span class="mark">← 受约束 prompt</span>
+                           {<span class="str">"role"</span>:<span class="str">"user"</span>,   <span class="str">"content"</span>: user_prompt}], ...)
+    buf = <span class="str">""</span>
+    <span class="kw">async for</span> chunk <span class="kw">in</span> stream:
+        buf += delta; full_text += delta
+        <span class="kw">while</span> (m := _SENT_BOUNDARY.search(buf)):               <span class="mark">← 攒到句号才发</span>
+            sentence, buf = buf[:m.end()].strip(), buf[m.end():]
+            <span class="kw">yield</span> <span class="fn">_sse_token</span>(sentence)
+    cited_ids = _CITATION_RE.findall(full_text)                <span class="cm"># \[事件#(\d+)\]</span>
+    valid = [<span class="fn">c</span> <span class="kw">for c in</span> cited_ids <span class="kw">if</span> c <span class="kw">in</span> event_ids]          <span class="mark">← 引用必须∈召回集</span>
+    <span class="kw">yield</span> <span class="str">f'event: done\ndata: {{"refusal": ..., "citations_valid": ...}}'</span></pre>
+
+<div class="callout"><b>为什么按句缓冲而不是逐 token？</b>（Q21 裁决）强制引用 <code>[事件#51]</code> 若在 token 中间被切断，前端会渲染出半个括号。攒到 <code>。！？\n</code> 再整句 flush，保证引用完整。<b>citations_valid 定义</b>：LLM 引用的事件 ID 必须全部 ∈ 本次召回归还的 event_ids——这是「受约束生成降幻觉」指标 citation_valid_rate=1.000 的计算处。</div>
+
+<!-- ==================== 三段检索 ==================== -->
+<h2>四 · B线心脏：retrieve 三段漏斗<span class="path">app/services/rag/retrieval.py:216</span></h2>
+<div class="flow">
+  <span class="step">_parse_time_window<small>中文时间词→区间</small></span><span class="arr">→</span>
+  <span class="step">stage1_time_filter<small>SQL btree，≤200 候选</small></span><span class="arr">→</span>
+  <span class="step">stage2_ann_recall<small>&lt;=&gt; cosine Top-20</small></span><span class="arr">→</span>
+  <span class="step">stage3_rerank<small>bge cross-encoder Top-5</small></span>
+</div>
+
+<table>
+<tr><th>段</th><th>关键代码事实</th><th>设计理由</th></tr>
+<tr><td><b>Stage 1 时间预过滤</b></td><td><code>_parse_time_window</code> 用 <code>datetime.now()</code> 解析「最近一周」等；<b>无时间词则完全不过滤</b>，仅按 source_count 排序取前 200</td><td>embedding 天生不认识时间，必须 SQL 补刀。⚠️ <code>now()</code> 正是「冻结快照库答不出最近一周」误拒案的案发现场</td></tr>
+<tr><td><b>Stage 2 ANN 召回</b></td><td>原生 SQL <code>ORDER BY embedding &lt;=&gt; :q LIMIT 20</code>，查询向量拼成字符串 <code>"[0.1,0.2,...]"</code> 传入</td><td>asyncpg 需要 string cast；HNSW 索引在此生效。20 = 召回导向，宁滥勿缺</td></tr>
+<tr><td><b>Stage 3 精排</b></td><td>CrossEncoder 在 <code>asyncio.to_thread</code> 里跑（模型是同步的）；失败时降级 <code>score = 1 - distance</code> 沿用 ANN 序</td><td>query 和文档拼在一起过 cross-encoder，精度远高于各自编码；单例加载避免每次请求载模型</td></tr>
+</table>
+
+<div class="callout red"><b>消融开关就在这：</b><code>use_time_filter / use_reranker / use_constrained_generation</code> 三个布尔参数即 run_ablation.py 五行配置的操作对象——砍一段重跑评测，掉分即证该段贡献（0.353 → 0.452）。</div>
+
+<!-- ==================== 测验 ==================== -->
+<h2>五 · 三问自测<span class="path">quiz</span></h2>
+<details><summary>Q1. 一篇报道 embedding 非 NULL、关键词与某事件重叠、但最高余弦只有 0.88。它的结局？</summary>
+<p><b>spawn 新事件。</b>阈值是严格大于 0.90（<code>best_sim > DEDUP_THRESHOLD</code>）。注意此时它<b>不会</b>因为关键词重叠就 attach——闸门只筛候选，不做决定。0.88 落在灰区正是两级设计的缓冲带。</p></details>
+<details><summary>Q2. 用户问「最近一周政治新闻」，冻结快照库里最新数据是 14 个月前的。retrieve 会返回什么？为什么？</summary>
+<p><b>空列表 → rag_answer_stream 直接硬拒答</b>（meta 空 → token「信息不足」→ done refusal:true）。根因链：<code>_parse_time_window</code> 用墙钟 <code>datetime.now()</code> 减 7 天 → 快照库没有任何事件落在窗口内 → stage1 返回 []。这就是评测里 46/48=0.958 那 2 分扣分处，与拒答判别逻辑无关。</p></details>
+<details><summary>Q3. LLM 答案里写了 <code>[事件#99]</code>，但本次 meta 给的是 [51,63,76]。done 事件的 citations_valid 是？</summary>
+<p><b>false。</b><code>valid = [c for c in cited_ids if c in event_ids]</code> → #99 ∉ 召回集。citation_valid_rate=1.000 表示历次评测从未出现这种越界引用——这正是受约束生成要证明的东西。</p></details>
+
+<footer>bishe 自学课程 · 第4课 函数级调用链 · 代码以仓库为准（commit 时点 2026-08）· 上一课：0003 目录深度导览 · 下一课预告：0005 schema 与索引为什么这样建</footer>
+</div>
+</body>
+</html>
