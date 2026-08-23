@@ -8,8 +8,10 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, ingest, p2, p3, p4, rag, reports
+from app.api import events, health, ingest, p2, p3, p4, rag, reports, user
+from app.api import digest, feed
 from app.db.session import engine
 
 
@@ -25,13 +27,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(health.router, prefix="/api")
+app.include_router(user.router, prefix="/api")
+app.include_router(events.router, prefix="/api")
 app.include_router(ingest.router, prefix="/api")
 app.include_router(reports.router, prefix="/api")
 app.include_router(p2.router, prefix="/api")
 app.include_router(p3.router, prefix="/api")
 app.include_router(p4.router, prefix="/api")
 app.include_router(rag.router, prefix="/api")
+app.include_router(digest.router, prefix="/api")
+app.include_router(feed.router)  # /feed/events.rss (no /api prefix)
 
 
 @app.get("/")
