@@ -23,7 +23,7 @@ from app.core.config import settings
 from app.models import NewsEvent, NewsReport
 from app.services.embed import embed_async, embed_one
 
-DEDUP_THRESHOLD = 0.90  # Q7-Q18: tuned from 100-pair gold set (precision=0.929, recall=1.000, F1=0.963)
+DEDUP_THRESHOLD = settings.dedup_sim_threshold  # Q7-Q18: tuned from 100-pair gold set (precision=0.929, recall=1.000, F1=0.963); default 0.90 in config, override via DEDUP_SIM_THRESHOLD
 # Note: at 0.75 the threshold was catastrophic (precision 0.134). Keyword gate
 # acts as additional safety margin on top of this already-validated threshold.
 
@@ -73,8 +73,6 @@ async def _spawn_event(
         merged_summary=report.summary or report.title,
         embedding=report.embedding,
         keywords=keywords,
-        fact_slots={},
-        conflict_flags={},
         source_count=1,
         event_publish_time=report.publish_time,
         ts=datetime.utcnow(),
@@ -177,12 +175,15 @@ async def run_p3(limit: int | None = None) -> dict:
         print(f"[p3] {len(rows)} reports pending dedup")
 
         # Extract keywords for all (batch)
+        # Fail loud: empty keywords would defeat the SQL gate and mass-spawn
+        # every report as a singleton event. Re-raise instead of degrading.
         summaries = [r.summary or r.title or "" for r in rows]
-        try:
-            keywords_list = await extract_keywords_batch(summaries)
-        except Exception as e:
-            print(f"[p3] keyword extraction batch failed: {e}; using empty lists")
-            keywords_list = [[] for _ in rows]
+        keywords_list = await extract_keywords_batch(summaries)
+        if len(keywords_list) != len(rows):
+            raise RuntimeError(
+                f"[p3] extract_keywords_batch returned {len(keywords_list)} "
+                f"keyword lists for {len(rows)} rows; aborting dedup run"
+            )
 
         stats = {"processed": 0, "spawn": 0, "attach": 0, "skipped": 0}
         for i, r in enumerate(rows):

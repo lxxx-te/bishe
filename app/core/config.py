@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-base"
 
     # Dedup
-    dedup_sim_threshold: float = 0.88
+    dedup_sim_threshold: float = 0.90
     dedup_precision_target: float = 0.9
 
     @property
