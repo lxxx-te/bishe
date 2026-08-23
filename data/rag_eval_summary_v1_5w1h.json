@@ -1,0 +1,7 @@
+{
+  "n": 48,
+  "avg_recall@5": 0.4520833333333334,
+  "refusal_accuracy": 0.9583333333333334,
+  "citation_valid_rate": 1.0,
+  "avg_faithfulness": 0.9777952652632961
+}

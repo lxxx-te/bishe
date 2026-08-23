@@ -1,0 +1,6 @@
+配置,time_filter,reranker,constrained_gen,recall@5,faithfulness
+① dense Top-5,False,False,False,0.353,0.947
+② ① + time filter,True,False,False,0.389,0.933
+③ ② + reranker,True,True,False,0.434,0.943
+④ ③ + constrained gen,True,True,True,0.434,1.000
+⑤ final,True,True,True,0.434,1.000

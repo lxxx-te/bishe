@@ -1,0 +1,47 @@
+[
+  {
+    "config": "① dense Top-5",
+    "use_time_filter": false,
+    "use_reranker": false,
+    "use_constrained_generation": false,
+    "avg_recall@5": 0.3526666666666667,
+    "avg_faithfulness": 0.9468864468864469,
+    "refusal_accuracy": 1.0
+  },
+  {
+    "config": "② ① + time filter",
+    "use_time_filter": true,
+    "use_reranker": false,
+    "use_constrained_generation": false,
+    "avg_recall@5": 0.38866666666666666,
+    "avg_faithfulness": 0.9333333333333332,
+    "refusal_accuracy": 0.9
+  },
+  {
+    "config": "③ ② + reranker",
+    "use_time_filter": true,
+    "use_reranker": true,
+    "use_constrained_generation": false,
+    "avg_recall@5": 0.43400000000000005,
+    "avg_faithfulness": 0.9434523809523809,
+    "refusal_accuracy": 0.9
+  },
+  {
+    "config": "④ ③ + constrained gen",
+    "use_time_filter": true,
+    "use_reranker": true,
+    "use_constrained_generation": true,
+    "avg_recall@5": 0.43400000000000005,
+    "avg_faithfulness": 1.0,
+    "refusal_accuracy": 0.9
+  },
+  {
+    "config": "⑤ final",
+    "use_time_filter": true,
+    "use_reranker": true,
+    "use_constrained_generation": true,
+    "avg_recall@5": 0.43400000000000005,
+    "avg_faithfulness": 1.0,
+    "refusal_accuracy": 0.9
+  }
+]
