@@ -11,6 +11,7 @@ sentence tail not lost mid-stream.
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import AsyncIterator
 
@@ -19,18 +20,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.rag.retrieval import retrieve
-from app.services.summarize import _get_client, _call_deepseek, RAG_TEMP
+from app.services.summarize import _get_client, RAG_TEMP
+
+RAG_SYSTEM_UNCONSTRAINED = (
+    "你是一个新闻事件问答助手。请根据下面提供的新闻事件 context 回答用户问题。"
+    "如果 context 中没有相关信息，请直接说明。"
+)
 
 RAG_SYSTEM = (
     "你是一个新闻事件问答助手。规则：\n"
     "1) 你只能用下文 context 提供的事件信息回答用户问题，"
     "不许使用 context 之外的任何知识、推测或编造。\n"
-    "2) context 中没有相关事件时，必须输出'信息不足'四个字，什么也不说。\n"
-    "3) 答案每句必须以事件引用结尾，格式 [事件#<id>]。没引用的句子不允许。\n"
+    "2) 只要 context 中有任何与问题相关的事件，就应优先回答；"
+    "只有当 context 完全没有相关信息时，才输出'信息不足'四个字。\n"
+    "3) 每个事实句最好以事件引用结尾，格式 [事件#<id>]；"
+    "综述性语句允许不引用，但涉及具体事实时必须引用。\n"
     "4) 输出全中文。\n"
-    "5) 优先引用与问题最相关的 1-3 个事件，不要把 5 个事件都列一遍。\n"
-    "6) 若事件中事实槽位含 ' / ' 分隔的多候选值，说明这是多家报道不一致，"
-    "请在答案中并列呈现而非选一个，例如'死亡 12/15 人[事件#X]'。\n"
+    "5) 对于需要多个事件回答的问题（如'最近有哪些...'），可以引用 1-5 个相关事件，"
+    "不要刻意只选一个，也不要把不相关的事件都列出来。\n"
 )
 
 
@@ -45,23 +52,6 @@ def _build_context(events_with_reports: list[tuple[NewsEvent, list[NewsReport]]]
             f"时间: {ev.event_publish_time.strftime('%Y-%m-%d') if ev.event_publish_time else 'N/A'}",
             f"来源: {ev.source_count} 篇报道",
         ]
-        if ev.fact_slots:
-            fact_lines = []
-            for k in ("who", "what", "when", "where", "why", "howmany"):
-                v = ev.fact_slots.get(k)
-                if v and v != "N/A":
-                    fact_lines.append(f"  {k}: {v}")
-            if fact_lines:
-                block.append("5W1H 事实:")
-                block.extend(fact_lines)
-        if ev.conflict_flags:
-            cf_lines = []
-            for k, info in ev.conflict_flags.items():
-                if isinstance(info, dict) and info.get("status") in ("conflict",):
-                    cf_lines.append(f"  {k} 冲突: {info.get('note')} 候选={info.get('values')}")
-            if cf_lines:
-                block.append("冲突标记:")
-                block.extend(cf_lines)
         # report sources (title + source site)
         for r in reports[:3]:
             block.append(f"  - [{r.source_site}] {r.title}")
@@ -101,6 +91,14 @@ async def fetch_events_with_reports(
 
 # Sentence boundary: 。 ！ ？ \n
 _SENT_BOUNDARY = re.compile(r"[。！？\n]")
+_CITATION_RE = re.compile(r"\[事件#(\d+)\]")
+
+
+def _sse_token(text: str) -> str:
+    """Format text as a single SSE token event, escaping newlines per spec."""
+    lines = text.split("\n")
+    data_lines = "\n".join(f"data: {line}" for line in lines)
+    return f"event: token\n{data_lines}\n\n"
 
 
 async def rag_answer_stream(
@@ -109,21 +107,32 @@ async def rag_answer_stream(
     interest_tags: list[str] | None = None,
     top_recall: int = 20,
     top_final: int = 5,
+    use_time_filter: bool = True,
+    use_reranker: bool = True,
+    use_constrained_generation: bool = True,
 ) -> AsyncIterator[str]:
     """Full RAG: retrieve -> fetch events -> generate (streamed).
 
     Yields SSE-format events. The first event is a 'meta' with retrieved
     event ids; subsequent events are 'token' containing one buffered
-    sentence at a time. Final event is 'done' with refusal flag.
+    sentence at a time. Final event is 'done' with refusal flag and
+    citation metadata.
+
+    Feature flags for ablation studies:
+      use_time_filter=False:          skip SQL time pre-filter
+      use_reranker=False:             skip cross-encoder rerank
+      use_constrained_generation=False: plain prompt without forced citation/refusal
 
     If context insufficient (no events) or LLM says 信息不足, yield
     refusal marker.
     """
     # 1. Retrieve
     event_ids = await retrieve(
-        session, query_text, interest_tags, top_recall=top_recall, top_final=top_final
+        session, query_text, interest_tags,
+        top_recall=top_recall, top_final=top_final,
+        use_time_filter=use_time_filter, use_reranker=use_reranker,
     )
-    yield f"event: meta\ndata: {{\"event_ids\": {event_ids}}}\n\n"
+    yield f"event: meta\ndata: {json.dumps({'event_ids': event_ids})}\n\n"
 
     if not event_ids:
         yield "event: token\ndata: 信息不足\n\n"
@@ -147,18 +156,17 @@ async def rag_answer_stream(
         f"请按规则回答:"
     )
 
-    yield f"event: token\ndata: {('检索到 ' + str(len(event_ids)) + ' 个候选事件，开始生成...').encode('unicode_escape').decode()}\n\n"
-
     # Use openai async streaming
-    from openai import AsyncOpenAI
     client = _get_client()
     buf = ""
+    full_text = ""
 
     try:
+        system_prompt = RAG_SYSTEM if use_constrained_generation else RAG_SYSTEM_UNCONSTRAINED
         stream = await client.chat.completions.create(
             model=settings.deepseek_model,
             messages=[
-                {"role": "system", "content": RAG_SYSTEM},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=RAG_TEMP,
@@ -171,6 +179,7 @@ async def rag_answer_stream(
             if not delta:
                 continue
             buf += delta
+            full_text += delta
             # Flush sentence-by-sentence
             while True:
                 m = _SENT_BOUNDARY.search(buf)
@@ -180,18 +189,31 @@ async def rag_answer_stream(
                 sentence = buf[:end].strip()
                 buf = buf[end:]
                 if sentence:
-                    # SSE event: token sentence
+                    # SSE event: token sentence (multiline data lines per SSE spec)
                     print(f"[rag.stream] tx: {sentence[:60]}...", flush=True)
-                    yield f"event: token\ndata: {sentence.encode('unicode_escape').decode()}\n\n"
+                    yield _sse_token(sentence)
     except Exception as e:
         err_msg = f"[RAG 生成失败: {e}]"
-        yield f"event: token\ndata: {err_msg.encode('unicode_escape').decode()}\n\n"
+        yield _sse_token(err_msg)
+        yield f"event: done\ndata: {json.dumps({'refusal': True, 'error': True})}\n\n"
+        return
 
     # Flush any remaining buffer
     if buf.strip():
-        yield f"event: token\ndata: {buf.strip().encode('unicode_escape').decode()}\n\n"
+        yield _sse_token(buf.strip())
 
     # Refusal detection: did output contain 信息不足?
-    full_text = ""  # we lost full text but the most reliable signal is 信息不足 in chunks
-    # Actually we need to check - for simplicity check last emitted sentence
-    yield "event: done\ndata: {\"refusal\": false}\n\n"
+    is_refusal = "信息不足" in full_text
+
+    # Citation parsing and validation
+    cited_ids = [int(m) for m in _CITATION_RE.findall(full_text)]
+    valid_citations = [c for c in cited_ids if c in event_ids]
+    citations_valid = len(cited_ids) == 0 or len(cited_ids) == len(valid_citations)
+    # Note: if LLM says "信息不足" it should not cite anything; empty citations are valid.
+
+    done_payload = {
+        "refusal": is_refusal,
+        "citations": cited_ids,
+        "citations_valid": citations_valid,
+    }
+    yield f"event: done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"

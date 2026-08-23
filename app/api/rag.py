@@ -6,9 +6,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
 from app.db.session import AsyncSessionLocal
-from app.models import NewsReport, UserProfile
+from app.models import UserProfile
 from app.services.rag.answer import rag_answer_stream
-from app.services.rag.dailylimit import today_limit_reached, increment_today
+from app.services.rag.dailylimit import today_limit_reached, increment_today_async
 
 router = APIRouter()
 
@@ -54,7 +54,7 @@ async def rag_ask(
 
     async def gen():
         async with AsyncSessionLocal() as session:
-            increment_today(1)
+            await increment_today_async(1)
             async for evt in rag_answer_stream(
                 session, query, interest_tags=interest_tags,
             ):

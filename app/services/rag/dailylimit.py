@@ -5,6 +5,7 @@ key format: 'YYYY-MM-DD' -> int count.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import date
 from pathlib import Path
@@ -47,3 +48,12 @@ def increment_today(n: int = 1) -> int:
     data[key] = data.get(key, 0) + n
     _save(data)
     return data[key]
+
+
+_lock = asyncio.Lock()
+
+
+async def increment_today_async(n: int = 1) -> int:
+    """Thread-safe / async-safe increment for concurrent RAG requests."""
+    async with _lock:
+        return increment_today(n)

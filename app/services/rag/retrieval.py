@@ -17,14 +17,13 @@ from datetime import datetime, timedelta
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 
-from functools import lru_cache
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import NewsEvent, NewsReport
-from app.services.embed import embed_one, EMBED_DIM
+from app.models import NewsEvent
+from app.services.embed import embed_one
 
 # Local bge-reranker singleton (heavy model loaded once)
 _reranker_singleton: Any = None
@@ -220,12 +219,21 @@ async def retrieve(
     interest_tags: list[str] | None = None,
     top_recall: int = 20,
     top_final: int = 5,
+    use_time_filter: bool = True,
+    use_reranker: bool = True,
 ) -> list[int]:
-    """Full pipeline: time -> ANN -> rerank -> event ids."""
-    window = _parse_time_window(query_text)
+    """Full pipeline: time -> ANN -> rerank -> event ids.
+
+    Feature flags for ablation studies:
+      use_time_filter=False: skip SQL time pre-filter (semantic-only)
+      use_reranker=False:    return ANN order without cross-encoder rerank
+    """
+    window = _parse_time_window(query_text) if use_time_filter else None
     candidate_ids = await stage1_time_filter(session, window, interest_tags)
     if not candidate_ids:
         return []
     ann_results = await stage2_ann_recall(session, query_text, candidate_ids, top_k=top_recall)
+    if not use_reranker:
+        return [eid for eid, _ in ann_results[:top_final]]
     rerank_results = await stage3_rerank(session, query_text, ann_results, top_k=top_final)
     return [eid for eid, _ in rerank_results]
