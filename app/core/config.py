@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     dedup_sim_threshold: float = 0.90
     dedup_precision_target: float = 0.9
 
+    # RAG answer-time full-text extraction (query-time context expansion over
+    # stored report raw_text; eval scripts pass explicit flags so frozen
+    # numbers stay reproducible regardless of this switch)
+    rag_use_full_text: bool = True
+
     @property
     def root(self) -> Path:
         return Path(__file__).resolve().parents[2]

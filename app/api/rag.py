@@ -5,6 +5,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.models import UserProfile
 from app.services.rag.answer import rag_answer_stream
@@ -27,7 +28,11 @@ async def rag_ask(
     query = (body or {}).get("query", "").strip()
     if not query:
         return StreamingResponse(
-            iter(["event: token\ndata: 请输入问题\n\n", "event: done\ndata: {\"refusal\": true}\n\n"]),
+            iter([
+                "event: token\ndata: 请输入问题\n\n",
+                "event: done\ndata: {\"refusal\": true}\n\n",
+                "event: eof\ndata: [DONE]\n\n",
+            ]),
             media_type="text/event-stream",
         )
 
@@ -36,6 +41,7 @@ async def rag_ask(
             iter([
                 "event: token\ndata: 今日 RAG 查询额度已用尽，请明天再试\n\n",
                 "event: done\ndata: {\"refusal\": true, \"reason\": \"daily_limit\"}\n\n",
+                "event: eof\ndata: [DONE]\n\n",
             ]),
             media_type="text/event-stream",
         )
@@ -55,9 +61,15 @@ async def rag_ask(
     async def gen():
         async with AsyncSessionLocal() as session:
             await increment_today_async(1)
-            async for evt in rag_answer_stream(
-                session, query, interest_tags=interest_tags,
-            ):
-                yield evt
+            try:
+                async for evt in rag_answer_stream(
+                    session, query, interest_tags=interest_tags,
+                    use_full_text=settings.rag_use_full_text,
+                ):
+                    yield evt
+            except Exception:
+                yield "event: done\ndata: {\"refusal\": true, \"error\": true}\n\n"
+            finally:
+                yield "event: eof\ndata: [DONE]\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")

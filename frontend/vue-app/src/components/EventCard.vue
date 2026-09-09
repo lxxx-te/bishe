@@ -1,15 +1,13 @@
 <template>
-  <div class="event-card" @click="expanded = !expanded">
-    <div class="event-header">
-      <span class="event-category">{{ event.category || '未分类' }}</span>
-      <span class="event-time">{{ formatTime(event.event_publish_time) }}</span>
-      <span class="event-breadth">{{ event.source_breadth || 0 }} 家媒体报道</span>
-    </div>
-
+  <article class="event-item" @click="expanded = !expanded">
     <p class="event-summary">{{ event.merged_summary || '（无摘要）' }}</p>
-
-    <div class="keywords">
-      <span v-for="kw in (event.keywords || []).slice(0, 5)" :key="kw" class="keyword">#{{ kw }}</span>
+    <div class="event-meta">
+      <span class="event-category">{{ event.category || '未分类' }}</span>
+      <span class="sep">·</span>
+      <span class="event-breadth" :class="{ multi: (event.source_breadth || 0) >= 2 }">{{ event.source_breadth || 0 }} 家媒体</span>
+      <span class="sep">·</span>
+      <time>{{ formatTime(event.event_publish_time) }}</time>
+      <span class="hint">{{ expanded ? '收起来源' : '来源报道' }}</span>
     </div>
 
     <div v-if="expanded" class="detail" @click.stop>
@@ -22,10 +20,9 @@
           </a>
         </li>
       </ul>
+      <p v-if="(event.keywords || []).length" class="kw-line">关键词：{{ (event.keywords || []).join(' / ') }}</p>
     </div>
-
-    <div class="hint">{{ expanded ? '收起' : '查看来源报道' }}<span class="chevron" aria-hidden="true">{{ expanded ? '−' : '+' }}</span></div>
-  </div>
+  </article>
 </template>
 
 <script setup>
@@ -40,68 +37,59 @@ const expanded = ref(false)
 function formatTime(iso) {
   if (!iso) return ''
   const d = new Date(iso)
-  return isNaN(d) ? iso : d.toLocaleDateString('zh-CN')
+  if (isNaN(d)) return iso
+  return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 </script>
 
 <style scoped>
-.event-card {
-  border: 1px solid var(--line);
-  padding: clamp(18px, 4vw, 26px);
-  margin-bottom: 14px;
-  background: var(--surface);
+.event-item {
+  padding: 16px 2px;
+  border-bottom: 1px solid var(--line);
   cursor: pointer;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
+  transition: background 0.12s;
 }
-.event-card:hover {
-  border-color: var(--line-strong);
-  box-shadow: var(--shadow-md);
-}
-.event-header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  margin-bottom: 14px;
-  font-size: 12.5px;
-}
-.event-category {
-  background: var(--ink-strong);
-  color: #fff;
-  padding: 2px 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  border-radius: var(--radius-sm);
-}
-.event-time {
-  color: var(--muted);
-}
-.event-breadth {
-  color: var(--accent-ink);
-  font-weight: 600;
+.event-item:hover {
+  background: rgba(30, 58, 95, 0.04);
 }
 .event-summary {
-  margin: 0 0 12px;
-  line-height: 1.8;
-  font-size: 15px;
+  margin: 0 0 8px;
+  line-height: 1.75;
+  font-size: 14.5px;
   color: var(--ink);
 }
-.keywords {
+.event-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 4px;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--muted);
 }
-.keyword {
-  font-size: 12px;
+.sep {
   color: var(--faint);
 }
+.event-category {
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.event-breadth.multi {
+  color: var(--accent);
+  font-weight: 600;
+}
+.hint {
+  margin-left: auto;
+  color: var(--faint);
+  transition: color 0.15s;
+}
+.event-item:hover .hint {
+  color: var(--ink-strong);
+}
 .detail {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-strong);
   cursor: default;
 }
 .detail h4 {
@@ -138,28 +126,9 @@ function formatTime(iso) {
 .report-list a:hover {
   border-color: var(--ink-strong);
 }
-.hint {
-  margin-top: 14px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--faint);
-  letter-spacing: 0.04em;
-  transition: color 0.15s;
-}
-.event-card:hover .hint {
-  color: var(--ink-strong);
-}
-.chevron {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border: 1px solid var(--line-strong);
+.kw-line {
+  margin: 4px 0 0;
   font-size: 12px;
-  line-height: 1;
-  border-radius: 6px;
+  color: var(--faint);
 }
 </style>

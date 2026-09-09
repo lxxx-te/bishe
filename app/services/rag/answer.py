@@ -40,6 +40,20 @@ RAG_SYSTEM = (
     "不要刻意只选一个，也不要把不相关的事件都列出来。\n"
 )
 
+# Query-time full-text extraction (use_full_text): a pre-generation LLM pass
+# that pulls query-relevant verbatim passages out of the retrieved events'
+# stored report raw_text. Fixes the summary-bottleneck: details absent from
+# merged_summary become answerable. Extraction output is treated as context
+# and stays under the same constrained-generation rules.
+FULL_TEXT_EXTRACT_SYSTEM = (
+    "你是新闻问答的资料提取员。给你一个用户问题和若干新闻报道原文，"
+    "逐篇判断：只摘录与问题直接相关的原文片段（尽量保留原句，不要改写），"
+    "每段摘录前单独一行标注 [报道#<id>]；整篇与问题无关则只输出一行"
+    "[报道#<id>] 无关。不要解释，不要补充原文之外的信息。"
+)
+FULL_TEXT_CHARS_PER_REPORT = 700
+FULL_TEXT_TOTAL_CHAR_CAP = 9000
+
 
 def _build_context(events_with_reports: list[tuple[NewsEvent, list[NewsReport]]]) -> str:
     """Build context block for LLM prompt."""
@@ -57,6 +71,63 @@ def _build_context(events_with_reports: list[tuple[NewsEvent, list[NewsReport]]]
             block.append(f"  - [{r.source_site}] {r.title}")
         blocks.append("\n".join(block))
     return "\n\n".join(blocks)
+
+
+def _build_full_text_block(
+    events_with_reports: list[tuple[NewsEvent, list[NewsReport]]],
+) -> str:
+    """Render stored report raw_text excerpts for the extraction pass."""
+    parts: list[str] = []
+    total = 0
+    for ev, reports in events_with_reports:
+        for r in reports[:3]:
+            if not r.raw_text:
+                continue
+            excerpt = r.raw_text[:FULL_TEXT_CHARS_PER_REPORT]
+            if total + len(excerpt) > FULL_TEXT_TOTAL_CHAR_CAP:
+                return "\n\n".join(parts)
+            total += len(excerpt)
+            parts.append(
+                f"[报道#{r.id} | 事件#{ev.id} | 来源:{r.source_site}] "
+                f"{r.title}\n{excerpt}"
+            )
+    return "\n\n".join(parts)
+
+
+async def extract_relevant_passages(
+    query_text: str,
+    events_with_reports: list[tuple[NewsEvent, list[NewsReport]]],
+) -> str:
+    """One non-streaming LLM call: pull verbatim passages relevant to the
+    query out of the retrieved reports' raw_text. Returns '' when nothing
+    relevant (or on failure — answering must degrade to summary-only, not
+    die, unlike the ingest gate where fail-loud is correct)."""
+    block = _build_full_text_block(events_with_reports)
+    if not block.strip():
+        return ""
+    from app.core.config import settings
+
+    client = _get_client()
+    try:
+        resp = await client.chat.completions.create(
+            model=settings.deepseek_model,
+            messages=[
+                {"role": "system", "content": FULL_TEXT_EXTRACT_SYSTEM},
+                {
+                    "role": "user",
+                    "content": f"用户问题: {query_text}\n\n报道原文:\n{block}",
+                },
+            ],
+            temperature=0.1,
+            max_tokens=1200,
+            timeout=60.0,
+        )
+        out = (resp.choices[0].message.content or "").strip()
+        print(f"[rag.fulltext] extracted {len(out)} chars", flush=True)
+        return out
+    except Exception as e:
+        print(f"[rag.fulltext] extraction failed, summary-only fallback: {e}", flush=True)
+        return ""
 
 
 async def fetch_events_with_reports(
@@ -110,6 +181,7 @@ async def rag_answer_stream(
     use_time_filter: bool = True,
     use_reranker: bool = True,
     use_constrained_generation: bool = True,
+    use_full_text: bool = False,
 ) -> AsyncIterator[str]:
     """Full RAG: retrieve -> fetch events -> generate (streamed).
 
@@ -122,6 +194,9 @@ async def rag_answer_stream(
       use_time_filter=False:          skip SQL time pre-filter
       use_reranker=False:             skip cross-encoder rerank
       use_constrained_generation=False: plain prompt without forced citation/refusal
+      use_full_text=True:             pre-generation extraction pass over the
+                                      retrieved events' stored report raw_text
+                                      (summary-bottleneck fix; ablation row)
 
     If context insufficient (no events) or LLM says 信息不足, yield
     refusal marker.
@@ -137,17 +212,25 @@ async def rag_answer_stream(
     if not event_ids:
         yield "event: token\ndata: 信息不足\n\n"
         yield "event: done\ndata: {\"refusal\": true}\n\n"
+        yield "event: eof\ndata: [DONE]\n\n"
         return
 
     # 2. Fetch events + reports for context
     events_with_reports = await fetch_events_with_reports(session, event_ids)
     context = _build_context(events_with_reports)
 
-    # 3. Constrained stream
+    # 2b. Optional query-time full-text extraction (use_full_text).
+    # Runs only when an API key exists; failure degrades to summary-only.
     from app.core.config import settings
+    if use_full_text and settings.deepseek_api_key:
+        passages = await extract_relevant_passages(query_text, events_with_reports)
+        if passages:
+            context += "\n\n=== 相关报道原文摘录（同样受规则约束，只能用这些内容） ===\n" + passages
+    # 3. Constrained stream
     if not settings.deepseek_api_key:
         yield f"event: token\ndata: [无 DeepSeek API Key, 不能生成答案。Context 已检索到事件 {event_ids}]\n\n"
         yield "event: done\ndata: {\"refusal\": true}\n\n"
+        yield "event: eof\ndata: [DONE]\n\n"
         return
 
     user_prompt = (
@@ -196,6 +279,7 @@ async def rag_answer_stream(
         err_msg = f"[RAG 生成失败: {e}]"
         yield _sse_token(err_msg)
         yield f"event: done\ndata: {json.dumps({'refusal': True, 'error': True})}\n\n"
+        yield "event: eof\ndata: [DONE]\n\n"
         return
 
     # Flush any remaining buffer
@@ -217,3 +301,4 @@ async def rag_answer_stream(
         "citations_valid": citations_valid,
     }
     yield f"event: done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+    yield "event: eof\ndata: [DONE]\n\n"

@@ -2,7 +2,6 @@
   <div class="digest-view">
     <header class="digest-header">
       <div>
-        <p class="eyebrow">DAILY DIGEST</p>
         <h2>每日简报</h2>
       </div>
       <div class="controls">
@@ -23,7 +22,7 @@
     </header>
 
     <p v-if="date" class="digest-meta">
-      {{ date }} 共 {{ count }} 条事件（多源优先，按报道数排序）
+      {{ date }} 共 {{ count }} 条事件（按多源度排序）
     </p>
 
     <div v-if="loading" class="status">加载中…</div>
@@ -47,13 +46,18 @@
       </article>
     </div>
 
-    <div v-if="!loading && !error && items.length === 0" class="status">该日期区间内没有事件</div>
+    <div v-if="!loading && !error && items.length === 0" class="status">
+      该日期区间内没有事件
+      <div v-if="latestDate && date !== latestDate" class="empty-jump">
+        <button class="jump-btn" @click="goLatest">跳到最近有数据的一天（{{ latestDate }}）</button>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { fetchDigest } from '../api.js'
+import { fetchDigest, fetchEvents, API_BASE } from '../api.js'
 
 const date = ref('')
 const days = ref(1)
@@ -61,11 +65,12 @@ const items = ref([])
 const count = ref(0)
 const loading = ref(false)
 const error = ref('')
+const latestDate = ref('')
 
 const today = new Date()
 const maxDate = today.toISOString().slice(0, 10)
 
-const rssUrl = computed(() => `http://localhost:8000/feed/events.rss?days=${days.value}`)
+const rssUrl = computed(() => `${API_BASE.replace(/\/api$/, '')}/feed/events.rss?days=${days.value}`)
 
 async function load() {
   loading.value = true
@@ -81,7 +86,22 @@ async function load() {
   }
 }
 
-onMounted(load)
+function goLatest() {
+  date.value = latestDate.value
+  load()
+}
+
+onMounted(async () => {
+  try {
+    const res = await fetchEvents(1, 0)
+    const pub = res.items?.[0]?.event_publish_time
+    if (pub) {
+      latestDate.value = pub.slice(0, 10)
+      if (!date.value) date.value = latestDate.value
+    }
+  } catch {}
+  load()
+})
 </script>
 
 <style scoped>
@@ -100,17 +120,10 @@ onMounted(load)
   border-bottom: 1px solid var(--line);
   padding-bottom: 24px;
 }
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 11px;
-  letter-spacing: 0.26em;
-  color: var(--faint);
-  font-weight: 600;
-}
 .digest-header h2 {
   margin: 0;
   font-family: var(--serif);
-  font-size: clamp(1.9rem, 4.5vw, 2.6rem);
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
   line-height: 1.15;
   color: var(--ink-strong);
 }
@@ -159,26 +172,22 @@ onMounted(load)
 .digest-list {
   display: flex;
   flex-direction: column;
-  gap: 14px;
 }
 .digest-card {
   display: flex;
   gap: 16px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  padding: clamp(18px, 4vw, 24px);
-  transition: border-color 0.2s, box-shadow 0.2s;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
+  padding: 18px 2px;
+  border-bottom: 1px solid var(--line);
+  transition: background 0.12s;
 }
 .digest-card:hover {
-  border-color: var(--line-strong);
-  box-shadow: var(--shadow-md);
+  background: rgba(30, 58, 95, 0.04);
 }
 .digest-index {
   font-family: var(--serif);
-  font-size: 28px;
-  color: var(--faint);
+  font-size: 26px;
+  color: var(--accent);
+  opacity: 0.55;
   line-height: 1;
   flex-shrink: 0;
 }
@@ -195,16 +204,12 @@ onMounted(load)
   font-size: 12.5px;
 }
 .digest-category {
-  background: var(--ink-strong);
-  color: #fff;
-  padding: 2px 10px;
+  color: var(--accent);
   font-weight: 600;
-  letter-spacing: 0.06em;
-  border-radius: var(--radius-sm);
+  letter-spacing: 0.02em;
 }
 .digest-sources {
-  color: var(--accent-ink);
-  font-weight: 600;
+  color: var(--muted);
 }
 .digest-card h3 {
   margin: 0 0 10px;

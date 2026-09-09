@@ -25,6 +25,7 @@
   gap: 32px;
   padding: 18px clamp(20px, 5vw, 48px);
   background: var(--surface);
+  border-top: 3px solid var(--accent);
   border-bottom: 1px solid var(--line);
 }
 .brand {

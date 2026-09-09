@@ -2,9 +2,8 @@
   <div class="event-stream">
     <header class="stream-header">
       <div>
-        <p class="eyebrow">EVENT STREAM</p>
         <h2>事件流</h2>
-        <p class="subtitle">共 {{ total }} 个事件 · 多源报道自动聚合</p>
+        <p class="subtitle">共 {{ total }} 个事件 · 多源报道自动聚合 · 显示最新 {{ events.length }} 条</p>
       </div>
       <router-link to="/chat" class="chat-link">去问问题 <span aria-hidden="true">→</span></router-link>
     </header>
@@ -14,13 +13,12 @@
         v-model="search"
         class="search-input"
         placeholder="搜索事件关键词…"
-        @input="applyFilters"
       />
-      <select v-model="sortBy" @change="applyFilters">
+      <select v-model="sortBy">
         <option value="breadth">按多源度</option>
         <option value="time">按时间</option>
       </select>
-      <select v-model="selectedCategory" @change="applyFilters">
+      <select v-model="selectedCategory" @change="loadEvents">
         <option value="">全部类别</option>
         <option v-for="cat in categories" :key="cat" :value="cat">{{ cat }}</option>
       </select>
@@ -67,10 +65,6 @@ async function loadEvents() {
   }
 }
 
-function applyFilters() {
-  // client-side filtering after load
-}
-
 const filteredEvents = computed(() => {
   let list = events.value
 
@@ -113,17 +107,10 @@ onMounted(loadEvents)
   border-bottom: 1px solid var(--line);
   padding-bottom: 28px;
 }
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 11px;
-  letter-spacing: 0.26em;
-  color: var(--faint);
-  font-weight: 600;
-}
 .stream-header h2 {
   margin: 0 0 6px;
   font-family: var(--serif);
-  font-size: clamp(1.9rem, 4.5vw, 2.6rem);
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
   line-height: 1.15;
   color: var(--ink-strong);
 }

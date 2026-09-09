@@ -2,7 +2,6 @@
   <div class="rag-chat">
     <header class="chat-header">
       <div>
-        <p class="eyebrow">RAG Q&A</p>
         <h2>问答</h2>
         <p class="subtitle">基于事件库的可溯源问答 · 每句答案带事件引用</p>
       </div>
@@ -60,7 +59,7 @@
     <div class="input-bar">
       <input
         v-model="query"
-        placeholder="输入问题，例如：最近关于科技领域的新闻有哪些？"
+        placeholder="输入问题，例如：政务数据共享条例的主要内容是什么？"
         @keydown.enter="ask"
       />
       <button :disabled="streaming || !query.trim()" @click="ask">发送</button>
@@ -93,10 +92,10 @@ const query = ref('')
 const streaming = ref(false)
 const selectedEvent = ref(null)
 const suggestedQuestions = [
-  '最近关于科技领域的新闻有哪些？',
-  '最近发生了哪些社会热点事件？',
+  '政务数据共享条例的主要内容是什么？',
   '习近平主席祝贺李在明当选韩国总统时说了什么？',
   '全国人大常委会启动节约能源法执法检查，主要检查哪些方面？',
+  '太阳系外宜居星球有哪些？',
 ]
 
 function setQuestion(q) {
@@ -171,8 +170,9 @@ async function ask() {
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let eof = false
 
-    while (true) {
+    while (!eof) {
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
@@ -180,6 +180,7 @@ async function ask() {
       buffer = events.pop() || ''
 
       for (const evt of events) {
+        if (!evt.trim()) continue
         const lines = evt.split('\n')
         let eventName = ''
         const dataLines = []
@@ -189,7 +190,10 @@ async function ask() {
         }
         const data = dataLines.join('\n')
 
-        if (eventName === 'token') {
+        if (eventName === 'eof') {
+          eof = true
+          break
+        } else if (eventName === 'token') {
           const sentence = parseSentence(data)
           if (sentence.text) {
             answerMsg.sentences.push(sentence)
@@ -205,6 +209,31 @@ async function ask() {
             }
           } catch {}
         }
+      }
+    }
+
+    // Process any remaining buffer content
+    if (buffer.trim()) {
+      const lines = buffer.split('\n')
+      let eventName = ''
+      const dataLines = []
+      for (const line of lines) {
+        if (line.startsWith('event: ')) eventName = line.slice(7)
+        else if (line.startsWith('data: ')) dataLines.push(line.slice(6))
+      }
+      if (eventName === 'token') {
+        const data = dataLines.join('\n')
+        const sentence = parseSentence(data)
+        if (sentence.text) {
+          answerMsg.sentences.push(sentence)
+        }
+      } else if (eventName === 'done') {
+        try {
+          const data = dataLines.join('\n')
+          const done = JSON.parse(data)
+          answerMsg.refusal = done.refusal || false
+          answerMsg.citations_valid = done.citations_valid !== false
+        } catch {}
       }
     }
   } catch (e) {
@@ -231,17 +260,10 @@ async function ask() {
   border-bottom: 1px solid var(--line);
   padding-bottom: 24px;
 }
-.eyebrow {
-  margin: 0 0 8px;
-  font-size: 11px;
-  letter-spacing: 0.26em;
-  color: var(--faint);
-  font-weight: 600;
-}
 .chat-header h2 {
   margin: 0 0 6px;
   font-family: var(--serif);
-  font-size: clamp(1.9rem, 4.5vw, 2.6rem);
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
   line-height: 1.15;
   color: var(--ink-strong);
 }
